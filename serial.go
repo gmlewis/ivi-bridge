@@ -90,7 +90,6 @@ func NewSerialController(portSpec string, baud int, dryRun bool) *SerialControll
 	}
 	if enabled {
 		go sc.runLoop()
-		go sc.pollLoop()
 	}
 	return sc
 }
@@ -203,25 +202,19 @@ func (sc *SerialController) runLoop() {
 			}
 		}
 
-		log.Printf("[serial] connected to %s @ %d baud", port, sc.baud)
+		log.Printf("[serial] connected to %s @ %d baud (passive telemetry mode)", port, sc.baud)
 		sc.mu.Lock()
 		sc.fd = fd
 		sc.state.Connected = true
 		sc.state.Port = port
 		sc.state.LastError = ""
-		sc.appendConsoleLocked("sys", fmt.Sprintf("Connected to %s @ %d", port, sc.baud))
+		sc.appendConsoleLocked("sys", fmt.Sprintf("Connected to %s @ %d (passive)", port, sc.baud))
 		sc.mu.Unlock()
 
-		// Request firmware info + initial temp & position shortly after connect.
-		go func() {
-			time.Sleep(400 * time.Millisecond)
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			_, _ = sc.SendGCode(ctx, "M115", 4*time.Second)
-			_, _ = sc.SendGCode(ctx, "M105", 3*time.Second)
-			_, _ = sc.SendGCode(ctx, "M114", 3*time.Second)
-		}()
-
+		// Do NOT transmit M115/M105/M114 automatically on connect: the IVI
+		// firmware already broadcasts temps, position, and Working Status
+		// unsolicited every ~5s, and injecting serial traffic during a
+		// touchscreen print (WORKING_SCREEN) causes a firmware error.
 		sc.readLoop(fd)
 		sc.closePort()
 
@@ -373,39 +366,6 @@ func (sc *SerialController) parseLineLocked(line string) {
 	}
 }
 
-func (sc *SerialController) pollLoop() {
-	if sc.dryRun {
-		return
-	}
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-	tick := 0
-	for {
-		select {
-		case <-sc.stopCh:
-			return
-		case <-ticker.C:
-			sc.mu.Lock()
-			connected := sc.state.Connected && sc.fd >= 0
-			sc.mu.Unlock()
-			if !connected {
-				continue
-			}
-			tick++
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			_, _ = sc.sendQuiet(ctx, "M105", 1500*time.Millisecond)
-			if tick%3 == 0 {
-				_, _ = sc.sendQuiet(ctx, "M114", 1500*time.Millisecond)
-			}
-			cancel()
-		}
-	}
-}
-
-func (sc *SerialController) sendQuiet(ctx context.Context, gcode string, timeout time.Duration) ([]string, error) {
-	return sc.sendInternal(ctx, gcode, timeout, false)
-}
-
 // SendGCode sends a single G-code line and waits for Marlin's "ok" response.
 func (sc *SerialController) SendGCode(ctx context.Context, gcode string, timeout time.Duration) ([]string, error) {
 	return sc.sendInternal(ctx, gcode, timeout, true)
@@ -434,9 +394,16 @@ func (sc *SerialController) sendInternal(ctx context.Context, gcode string, time
 
 	sc.mu.Lock()
 	fd := sc.fd
+	ws := sc.state.WorkingStatus
 	if fd < 0 || !sc.state.Connected {
 		sc.mu.Unlock()
 		return nil, errors.New("serial port not connected")
+	}
+	// Protect active touchscreen prints: never inject G-code over USB serial
+	// while the printer reports a non-IDLE Working Status (e.g. WORKING_SCREEN).
+	if ws != "" && ws != "IDLE" {
+		sc.mu.Unlock()
+		return nil, fmt.Errorf("serial commands blocked while printer is busy (Working Status: %s)", ws)
 	}
 	ch := make(chan string, 64)
 	sc.waiterCh = ch
