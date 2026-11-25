@@ -229,6 +229,8 @@ func (sc *SerialController) runLoop() {
 func (sc *SerialController) readLoop(fd int) {
 	buf := make([]byte, 1024)
 	var partial strings.Builder
+	fastZeroReads := 0
+	lastRx := time.Now()
 
 	for {
 		select {
@@ -237,7 +239,9 @@ func (sc *SerialController) readLoop(fd int) {
 		default:
 		}
 
+		t0 := time.Now()
 		n, err := syscall.Read(fd, buf)
+		elapsed := time.Since(t0)
 		if err != nil {
 			if errors.Is(err, syscall.EINTR) || errors.Is(err, syscall.EAGAIN) {
 				continue
@@ -250,8 +254,37 @@ func (sc *SerialController) readLoop(fd int) {
 			return
 		}
 		if n == 0 {
+			// With VTIME=2 (200ms), a normal idle timeout takes ~200ms.
+			// On Linux, a power-cycled/unplugged USB-CDC ttyACM returns n=0
+			// immediately (<20ms) forever; detect that EOF and reconnect.
+			if elapsed < 50*time.Millisecond {
+				fastZeroReads++
+				if fastZeroReads >= 3 {
+					log.Printf("[serial] device disconnected (EOF)")
+					sc.mu.Lock()
+					sc.state.LastError = "USB device disconnected"
+					sc.appendConsoleLocked("sys", "Disconnected (USB EOF) — reconnecting...")
+					sc.mu.Unlock()
+					return
+				}
+				time.Sleep(20 * time.Millisecond)
+			} else {
+				fastZeroReads = 0
+				// If the IVI has been completely silent for >20s (it broadcasts every ~5s),
+				// check if the fd is stale by reconnecting.
+				if time.Since(lastRx) > 20*time.Second {
+					log.Printf("[serial] no telemetry for 20s — reconnecting")
+					sc.mu.Lock()
+					sc.state.LastError = "serial silent — reconnecting"
+					sc.appendConsoleLocked("sys", "No telemetry for 20s — reconnecting...")
+					sc.mu.Unlock()
+					return
+				}
+			}
 			continue
 		}
+		fastZeroReads = 0
+		lastRx = time.Now()
 
 		partial.Write(buf[:n])
 		text := partial.String()
