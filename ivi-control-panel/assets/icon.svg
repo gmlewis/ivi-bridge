@@ -1,0 +1,139 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <!-- Deep macOS slate-navy gradient background -->
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1e293b"/>
+      <stop offset="50%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#090f1d"/>
+    </linearGradient>
+
+    <!-- Subtle top sheen -->
+    <radialGradient id="sheen" cx="50%" cy="22%" r="65%">
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#38bdf8" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Circular build plate gradient -->
+    <linearGradient id="bed" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#334155"/>
+      <stop offset="100%" stop-color="#1e293b"/>
+    </linearGradient>
+
+    <!-- Brushed steel delta arms -->
+    <linearGradient id="arm" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#e2e8f0"/>
+      <stop offset="50%" stop-color="#94a3b8"/>
+      <stop offset="100%" stop-color="#64748b"/>
+    </linearGradient>
+
+    <!-- Cyan effector & extruded ring glow -->
+    <linearGradient id="cyan" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#7dd3fc"/>
+      <stop offset="50%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#0284c7"/>
+    </linearGradient>
+
+    <!-- Brass hotend nozzle -->
+    <linearGradient id="brass" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#fde047"/>
+      <stop offset="45%" stop-color="#f59e0b"/>
+      <stop offset="100%" stop-color="#b45309"/>
+    </linearGradient>
+
+    <!-- Nozzle heat glow -->
+    <radialGradient id="heatGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#fb923c" stop-opacity="0.85"/>
+      <stop offset="50%" stop-color="#f59e0b" stop-opacity="0.28"/>
+      <stop offset="100%" stop-color="#f59e0b" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Cyan ring glow -->
+    <radialGradient id="cyanGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#38bdf8" stop-opacity="0"/>
+    </radialGradient>
+
+    <filter id="shadow" x="-15%" y="-15%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="14" stdDeviation="18" flood-color="#000000" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+
+  <!-- Full-bleed background (macOS iconutil applies squircle mask) -->
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <rect width="1024" height="1024" fill="url(#sheen)"/>
+
+  <!-- Subtle outer frame accent -->
+  <rect x="44" y="44" width="936" height="936" rx="196" fill="none" stroke="#38bdf8" stroke-opacity="0.16" stroke-width="6"/>
+
+  <!-- Circular Delta Build Plate (3/4 isometric perspective) -->
+  <g filter="url(#shadow)">
+    <!-- Plate rim thickness -->
+    <ellipse cx="512" cy="768" rx="348" ry="118" fill="#0b1220"/>
+    <ellipse cx="512" cy="748" rx="348" ry="118" fill="url(#bed)" stroke="#475569" stroke-width="6"/>
+    <!-- Subtle concentric grid rings on build plate -->
+    <ellipse cx="512" cy="748" rx="285" ry="94" fill="none" stroke="#64748b" stroke-opacity="0.35" stroke-width="3"/>
+    <ellipse cx="512" cy="748" rx="205" ry="66" fill="none" stroke="#64748b" stroke-opacity="0.35" stroke-width="3"/>
+  </g>
+
+  <!-- Glowing printed cyan ring on the build plate -->
+  <ellipse cx="512" cy="734" rx="178" ry="58" fill="url(#cyanGlow)"/>
+  <ellipse cx="512" cy="734" rx="146" ry="46" fill="none" stroke="url(#cyan)" stroke-width="18" stroke-linecap="round"/>
+  <ellipse cx="512" cy="726" rx="146" ry="46" fill="none" stroke="#e0f2fe" stroke-opacity="0.55" stroke-width="4"/>
+
+  <!-- 3 Vertical Delta Towers (stylized clean pillars) -->
+  <g stroke-linecap="round">
+    <!-- Left Tower -->
+    <rect x="172" y="136" width="38" height="532" rx="19" fill="#334155" stroke="#475569" stroke-width="4"/>
+    <rect x="184" y="162" width="14" height="472" rx="7" fill="#1e293b"/>
+    <!-- Right Tower -->
+    <rect x="814" y="136" width="38" height="532" rx="19" fill="#334155" stroke="#475569" stroke-width="4"/>
+    <rect x="826" y="162" width="14" height="472" rx="7" fill="#1e293b"/>
+    <!-- Back-Center Tower (subtle depth) -->
+    <rect x="496" y="108" width="32" height="390" rx="16" fill="#263348" stroke="#3b4c63" stroke-width="3"/>
+  </g>
+
+  <!-- Carriages on the 3 towers -->
+  <rect x="158" y="218" width="66" height="44" rx="12" fill="url(#cyan)" stroke="#bae6fd" stroke-width="3"/>
+  <rect x="800" y="218" width="66" height="44" rx="12" fill="url(#cyan)" stroke="#bae6fd" stroke-width="3"/>
+  <rect x="484" y="176" width="56" height="36" rx="10" fill="#0284c7" stroke="#7dd3fc" stroke-width="3"/>
+
+  <!-- Parallel Delta Arms (6 iconic rods meeting at the effector) -->
+  <g stroke="url(#arm)" stroke-width="14" stroke-linecap="round" filter="url(#shadow)">
+    <!-- Back pair -->
+    <line x1="498" y1="208" x2="478" y2="448"/>
+    <line x1="526" y1="208" x2="546" y2="448"/>
+    <!-- Left pair -->
+    <line x1="212" y1="234" x2="424" y2="464"/>
+    <line x1="212" y1="256" x2="424" y2="488"/>
+    <!-- Right pair -->
+    <line x1="812" y1="234" x2="600" y2="464"/>
+    <line x1="812" y1="256" x2="600" y2="488"/>
+  </g>
+
+  <!-- Delta Effector Platform -->
+  <g filter="url(#shadow)">
+    <polygon points="512,424 624,484 512,538 400,484" fill="#1e293b" stroke="url(#cyan)" stroke-width="10" stroke-linejoin="round"/>
+    <polygon points="512,442 594,484 512,520 430,484" fill="#0f172a" stroke="#38bdf8" stroke-opacity="0.45" stroke-width="3" stroke-linejoin="round"/>
+    <!-- Ball joint accents -->
+    <circle cx="424" cy="476" r="14" fill="#e2e8f0"/>
+    <circle cx="600" cy="476" r="14" fill="#e2e8f0"/>
+    <circle cx="512" cy="436" r="12" fill="#e2e8f0"/>
+  </g>
+
+  <!-- Hotend Heatsink & Brass Nozzle -->
+  <g filter="url(#shadow)">
+    <!-- Cooling fins -->
+    <rect x="476" y="514" width="72" height="16" rx="6" fill="#64748b"/>
+    <rect x="480" y="536" width="64" height="14" rx="5" fill="#94a3b8"/>
+    <rect x="486" y="556" width="52" height="14" rx="5" fill="#64748b"/>
+    <!-- Heater block -->
+    <rect x="478" y="578" width="68" height="44" rx="10" fill="#cbd5e1" stroke="#f8fafc" stroke-width="3"/>
+    <!-- Brass nozzle cone -->
+    <polygon points="484,622 540,622 522,680 502,680" fill="url(#brass)" stroke="#fef08a" stroke-width="3" stroke-linejoin="round"/>
+  </g>
+
+  <!-- Glowing hot nozzle tip & precision extrusion drop -->
+  <circle cx="512" cy="692" r="54" fill="url(#heatGlow)"/>
+  <circle cx="512" cy="686" r="12" fill="#fef08a"/>
+  <path d="M 512 694 C 512 712, 512 720, 512 732" stroke="#38bdf8" stroke-width="10" stroke-linecap="round"/>
+</svg>

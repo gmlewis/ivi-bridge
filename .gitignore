@@ -1,0 +1,9 @@
+bin/
+.DS_Store
+ivi-control-panel/node_modules/
+ivi-control-panel/dist/
+ivi-control-panel/.env
+ivi-control-panel-android/.gradle/
+ivi-control-panel-android/app/build/
+ivi-control-panel-android/build/
+ivi-control-panel-android/local.properties

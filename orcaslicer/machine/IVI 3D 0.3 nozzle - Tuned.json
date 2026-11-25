@@ -1,0 +1,28 @@
+{
+    "from": "User",
+    "inherits": "IVI 3D 0.3 nozzle",
+    "name": "IVI 3D 0.3 nozzle - Tuned",
+    "print_host": "127.0.0.1:5000",
+    "printer_agent": "orca",
+    "printer_extruder_id": [
+        "1"
+    ],
+    "printer_extruder_variant": [
+        "Direct Drive Standard"
+    ],
+    "printer_settings_id": "IVI 3D 0.3 nozzle - Tuned",
+    "version": "1.0.0.0",
+    "z_hop": [
+        "0.3"
+    ],
+    "z_hop_types": "Slope Lift",
+    "retraction_length": [
+        "4.5"
+    ],
+    "retraction_speed": [
+        "35"
+    ],
+    "deretraction_speed": [
+        "35"
+    ]
+}

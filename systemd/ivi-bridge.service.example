@@ -1,0 +1,12 @@
+[Unit]
+Description=IVI 3D Go OctoPrint Bridge (OrcaSlicer + IVI Control Panel)
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/tools/bin/ivi-bridge --printer 192.168.1.100:8080 --listen 0.0.0.0:5000 --serial auto
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

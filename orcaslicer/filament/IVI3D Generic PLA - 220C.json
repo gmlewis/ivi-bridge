@@ -1,0 +1,48 @@
+{
+    "filament_extruder_variant": [
+        "Direct Drive Standard"
+    ],
+    "filament_settings_id": [
+        "IVI3D Generic PLA - 220C"
+    ],
+    "from": "User",
+    "inherits": "IVI3D Generic PLA",
+    "name": "IVI3D Generic PLA - 220C",
+    "nozzle_temperature": [
+        "220"
+    ],
+    "nozzle_temperature_initial_layer": [
+        "220"
+    ],
+    "version": "1.0.0.0",
+    "filament_flow_ratio": [
+        "0.985"
+    ],
+    "enable_pressure_advance": [
+        "0"
+    ],
+    "pressure_advance": [
+        "0"
+    ],
+    "filament_z_hop": [
+        "0.3"
+    ],
+    "filament_z_hop_types": [
+        "Slope Lift"
+    ],
+    "filament_retraction_length": [
+        "5"
+    ],
+    "filament_retraction_speed": [
+        "40"
+    ],
+    "filament_deretraction_speed": [
+        "35"
+    ],
+    "filament_wipe": [
+        "1"
+    ],
+    "filament_wipe_distance": [
+        "1.5"
+    ]
+}
