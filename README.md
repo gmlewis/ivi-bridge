@@ -1,8 +1,8 @@
 # ivi-bridge
 
-<p align="center">
-  <img src="assets/ivi-bridge-mascot.png" alt="ivi-bridge Go Gopher Mascot with Delta 3D Printer" width="520" />
-</p>
+![ivi-bridge mascot
+The Go gopher was designed by Renee French.
+The design is licensed under the Creative Commons 4.0 Attribution license.](assets/ivi-bridge-mascot.png)
 
 Zero-dependency Go bridge (Wi-Fi + USB Marlin serial), tuned OrcaSlicer profiles,
 native desktop control panel (`gpuix-svelte` + Bun), and native Android app
