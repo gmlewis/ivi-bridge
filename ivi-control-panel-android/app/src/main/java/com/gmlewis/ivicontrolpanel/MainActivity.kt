@@ -60,9 +60,16 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.max
+import kotlin.math.min
+
+private const val COLD_EXTRUSION_MIN_C = 175.0
 
 private val BgDark = Color(0xFF0F172A)
 private val CardDark = Color(0xFF1E293B)
@@ -71,6 +78,7 @@ private val BorderSlate = Color(0xFF334155)
 private val AccentCyan = Color(0xFF0284C7)
 private val AccentCyanLight = Color(0xFF38BDF8)
 private val AccentRed = Color(0xFFDC2626)
+private val AccentRedDim = Color(0xFF991B1B)
 private val AccentGreen = Color(0xFF059669)
 private val AccentAmber = Color(0xFFD97706)
 private val TextPrimary = Color(0xFFF8FAFC)
@@ -109,11 +117,15 @@ private fun IviControlPanelApp() {
         mutableStateOf(prefs.getString("bridge_url", BridgeApi.DEFAULT_URL) ?: BridgeApi.DEFAULT_URL)
     }
     var urlDraft by remember { mutableStateOf(bridgeUrl) }
-    var activeTab by remember { mutableIntStateOf(0) } // 0=Control, 1=Console, 2=History
+    var activeTab by remember { mutableIntStateOf(0) } // 0=Control, 1=Filament, 2=Console, 3=History
     var state by remember { mutableStateOf<BridgeState?>(null) }
     var busy by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf("") }
     var noticeError by remember { mutableStateOf(false) }
+
+    // Two-tap safety confirmation state (auto-expires after 4s)
+    var armedAction by remember { mutableStateOf<String?>(null) }
+    var armJob by remember { mutableStateOf<Job?>(null) }
 
     var jogStep by remember { mutableDoubleStateOf(10.0) }
     var speedMode by remember { mutableIntStateOf(1) } // 0=Slow, 1=Normal, 2=Fast
@@ -124,13 +136,42 @@ private fun IviControlPanelApp() {
     var extrudeSpeedDraft by remember { mutableStateOf("180") }
     var gcodeDraft by remember { mutableStateOf("") }
 
+    // Filament Change Wizard state
+    var wizardMaterial by remember { mutableStateOf("PLA") }
+    var bowdenLen by remember { mutableIntStateOf(450) }
+    var wizardNote by remember {
+        mutableStateOf("Step 1: Pick PLA or PETG and heat the nozzle before unloading or loading.")
+    }
+
     val serial = state?.serial
     val serialReady = serial?.enabled == true && serial.connected
     val wifiOnline = state?.status?.reachable == true
+    val isPrinting = serialReady && !serial?.workingStatus.isNullOrBlank() && serial?.workingStatus != "IDLE"
+    val controlsEnabled = serialReady && !busy && !isPrinting
+    val hotendHot = serialReady && (serial?.nozzleActual ?: 0.0) >= COLD_EXTRUSION_MIN_C
+    val extrudeEnabled = controlsEnabled && hotendHot
 
     fun setMsg(msg: String, isErr: Boolean = false) {
         notice = msg
         noticeError = isErr
+    }
+
+    fun requireTwoTap(key: String, label: String, onConfirmed: () -> Unit) {
+        if (armedAction == key) {
+            armJob?.cancel()
+            armJob = null
+            armedAction = null
+            onConfirmed()
+            return
+        }
+        armJob?.cancel()
+        armedAction = key
+        setMsg("Tap \"$label\" again within 4s to confirm.")
+        armJob = scope.launch {
+            delay(4000)
+            armedAction = null
+            armJob = null
+        }
     }
 
     suspend fun pollOnce(showError: Boolean = false) {
@@ -142,7 +183,11 @@ private fun IviControlPanelApp() {
         }
     }
 
-    fun runAction(label: String, block: suspend () -> Unit) {
+    fun runAction(label: String, allowWhilePrinting: Boolean = false, block: suspend () -> Unit) {
+        if (isPrinting && !allowWhilePrinting) {
+            setMsg("Controls locked while printing (${serial?.workingStatus}).", true)
+            return
+        }
         scope.launch {
             busy = true
             try {
@@ -154,6 +199,21 @@ private fun IviControlPanelApp() {
             } finally {
                 busy = false
             }
+        }
+    }
+
+    suspend fun extrudeChunked(totalMm: Double, speed: Double, label: String) {
+        val sign = if (totalMm >= 0) 1.0 else -1.0
+        var remaining = abs(totalMm)
+        val chunk = 150.0
+        val totalChunks = max(1, ceil(remaining / chunk).toInt())
+        var idx = 0
+        while (remaining > 0.01) {
+            idx++
+            val step = min(chunk, remaining) * sign
+            wizardNote = "$label ($idx/$totalChunks)..."
+            BridgeApi.extrude(bridgeUrl, step, speed)
+            remaining -= abs(step)
         }
     }
 
@@ -175,7 +235,7 @@ private fun IviControlPanelApp() {
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // Header + E-STOP + Bridge URL
+        // Header + 2-tap E-STOP + Bridge URL
         Card(
             colors = CardDefaults.cardColors(containerColor = CardDark),
             border = BorderStroke(1.dp, BorderSlate),
@@ -198,13 +258,26 @@ private fun IviControlPanelApp() {
                         )
                     }
                     Spacer(Modifier.width(8.dp))
+                    val estopArmed = armedAction == "estop"
                     Button(
-                        onClick = { runAction("EMERGENCY STOP (M112) SENT!") { BridgeApi.eStop(bridgeUrl) } },
-                        colors = ButtonDefaults.buttonColors(containerColor = AccentRed),
+                        onClick = {
+                            requireTwoTap("estop", "CONFIRM E-STOP") {
+                                runAction("EMERGENCY STOP (M112) SENT!", allowWhilePrinting = true) {
+                                    BridgeApi.eStop(bridgeUrl)
+                                }
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = if (estopArmed) AccentRed else AccentRedDim),
+                        border = if (estopArmed) BorderStroke(2.dp, Color(0xFFFEF08A)) else null,
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                         shape = RoundedCornerShape(8.dp)
                     ) {
-                        Text("E-STOP", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color.White)
+                        Text(
+                            if (estopArmed) "CONFIRM E-STOP!" else "E-STOP",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp,
+                            color = Color.White
+                        )
                     }
                 }
 
@@ -215,17 +288,21 @@ private fun IviControlPanelApp() {
                 ) {
                     StatusPill(
                         label = if (wifiOnline) "Wi-Fi: Online" else "Wi-Fi: Offline",
-                        ok = wifiOnline
+                        bg = if (wifiOnline) Color(0xFF064E3B) else Color(0xFF451A03)
                     )
                     StatusPill(
                         label = if (serialReady) "USB: ${serial?.workingStatus?.ifBlank { "OK" }}" else "USB: Off",
-                        ok = serialReady
+                        bg = when {
+                            isPrinting -> Color(0xFF1E3A8A)
+                            serialReady -> Color(0xFF064E3B)
+                            else -> Color(0xFF451A03)
+                        }
                     )
                     if (serialReady && serial != null) {
                         if (serial.atHome) {
-                            StatusPill(label = "Homed", ok = true)
+                            StatusPill(label = "Homed", bg = Color(0xFF064E3B))
                         } else if (!serial.homed) {
-                            StatusPill(label = "Unhomed", ok = false)
+                            StatusPill(label = "Unhomed", bg = Color(0xFF451A03))
                         }
                     }
                 }
@@ -265,6 +342,23 @@ private fun IviControlPanelApp() {
             }
         }
 
+        // Print-Active Lockout Banner
+        if (isPrinting) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFF1E3A8A), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 10.dp, vertical = 7.dp)
+            ) {
+                Text(
+                    "PRINT IN PROGRESS (${serial?.workingStatus}) — Monitor-only mode: controls locked to protect your print.",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFFE0F2FE)
+                )
+            }
+        }
+
         // Live Telemetry Strip
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -298,11 +392,12 @@ private fun IviControlPanelApp() {
         // Tab Bar
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             TabButton("Control", activeTab == 0, Modifier.weight(1f)) { activeTab = 0 }
-            TabButton("Console (${serial?.console?.size ?: 0})", activeTab == 1, Modifier.weight(1f)) { activeTab = 1 }
-            TabButton("History (${state?.history?.size ?: 0})", activeTab == 2, Modifier.weight(1f)) { activeTab = 2 }
+            TabButton("Filament", activeTab == 1, Modifier.weight(1f)) { activeTab = 1 }
+            TabButton("Console", activeTab == 2, Modifier.weight(1f)) { activeTab = 2 }
+            TabButton("History", activeTab == 3, Modifier.weight(1f)) { activeTab = 3 }
         }
 
         if (notice.isNotBlank()) {
@@ -326,32 +421,65 @@ private fun IviControlPanelApp() {
                         .verticalScroll(scroll),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
+                    val onJogAction: (String, Int) -> Unit = { axis, sign ->
+                        val feed = when (speedMode) {
+                            0 -> if (axis == "Z") 600.0 else 1200.0
+                            2 -> if (axis == "Z") 3000.0 else 6000.0
+                            else -> if (axis == "Z") 1500.0 else 3000.0
+                        }
+                        val dist = jogStep * sign
+                        runAction("Jogged $axis ${if (dist > 0) "+" else ""}$dist mm") {
+                            BridgeApi.jog(bridgeUrl, axis, dist, feed)
+                        }
+                    }
+                    val onHomeAction: () -> Unit = {
+                        requireTwoTap("home", "HOME") {
+                            runAction("Homed all towers (G28)") { BridgeApi.home(bridgeUrl) }
+                        }
+                    }
+                    val onMotorsOffAction: () -> Unit = {
+                        requireTwoTap("motors", "Motors Off") {
+                            runAction("Motors disabled (M84)") { BridgeApi.motorsOff(bridgeUrl) }
+                        }
+                    }
+                    val onTempAction: (String, Int) -> Unit = { heater, target ->
+                        runAction("${heater.replaceFirstChar { it.uppercase() }} set to $target°C") {
+                            BridgeApi.setTemp(bridgeUrl, heater, target)
+                        }
+                    }
+                    val onCooldownAction: () -> Unit = {
+                        runAction("Cooldown: Nozzle 0°C, Bed 0°C, Fan Off") {
+                            BridgeApi.setTemp(bridgeUrl, "nozzle", 0)
+                            BridgeApi.setTemp(bridgeUrl, "bed", 0)
+                            BridgeApi.setFan(bridgeUrl, 0)
+                        }
+                    }
+                    val onExtrudeAction: (Int) -> Unit = { sign ->
+                        val spd = extrudeSpeedDraft.toDoubleOrNull()?.takeIf { it > 0 } ?: extrudeSpeed
+                        val verb = if (sign > 0) "Extruded" else "Retracted"
+                        runAction("$verb ${extrudeLen.toInt()} mm @ ${spd.toInt()} mm/min") {
+                            BridgeApi.extrude(bridgeUrl, extrudeLen * sign, spd)
+                        }
+                    }
+
                     if (isWide) {
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                 MotionCard(
-                                    enabled = serialReady && !busy,
+                                    enabled = controlsEnabled,
+                                    homeArmed = armedAction == "home",
+                                    motorsArmed = armedAction == "motors",
                                     jogStep = jogStep,
                                     speedMode = speedMode,
                                     zPos = serial?.z,
                                     onStepChange = { jogStep = it },
                                     onSpeedChange = { speedMode = it },
-                                    onJog = { axis, sign ->
-                                        val feed = when (speedMode) {
-                                            0 -> if (axis == "Z") 600.0 else 1200.0
-                                            2 -> if (axis == "Z") 3000.0 else 6000.0
-                                            else -> if (axis == "Z") 1500.0 else 3000.0
-                                        }
-                                        val dist = jogStep * sign
-                                        runAction("Jogged $axis ${if (dist > 0) "+" else ""}$dist mm") {
-                                            BridgeApi.jog(bridgeUrl, axis, dist, feed)
-                                        }
-                                    },
-                                    onHome = { runAction("Homed all towers (G28)") { BridgeApi.home(bridgeUrl) } },
-                                    onMotorsOff = { runAction("Motors disabled (M84)") { BridgeApi.motorsOff(bridgeUrl) } }
+                                    onJog = onJogAction,
+                                    onHome = onHomeAction,
+                                    onMotorsOff = onMotorsOffAction
                                 )
                                 BabystepFanCard(
-                                    enabled = serialReady && !busy,
+                                    enabled = controlsEnabled,
                                     fanPercent = serial?.fanPercent ?: 0,
                                     onBabystep = { d ->
                                         runAction("Z babystep ${if (d > 0) "+" else ""}$d mm") {
@@ -365,27 +493,17 @@ private fun IviControlPanelApp() {
                             }
                             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                 ThermalCard(
-                                    enabled = serialReady && !busy,
+                                    enabled = controlsEnabled,
                                     nozzleDraft = nozzleDraft,
                                     bedDraft = bedDraft,
                                     onNozzleDraft = { nozzleDraft = it },
                                     onBedDraft = { bedDraft = it },
-                                    onSetTemp = { heater, target ->
-                                        runAction("${heater.replaceFirstChar { it.uppercase() }} set to $target°C") {
-                                            BridgeApi.setTemp(bridgeUrl, heater, target)
-                                        }
-                                    },
-                                    onCooldownAll = {
-                                        runAction("Cooldown: Nozzle 0°C, Bed 0°C, Fan Off") {
-                                            BridgeApi.setTemp(bridgeUrl, "nozzle", 0)
-                                            BridgeApi.setTemp(bridgeUrl, "bed", 0)
-                                            BridgeApi.setFan(bridgeUrl, 0)
-                                        }
-                                    }
+                                    onSetTemp = onTempAction,
+                                    onCooldownAll = onCooldownAction
                                 )
                                 ExtruderCard(
-                                    enabled = serialReady && !busy,
-                                    nozzleActual = serial?.nozzleActual ?: 0.0,
+                                    enabled = extrudeEnabled,
+                                    hotendHot = hotendHot,
                                     extrudeLen = extrudeLen,
                                     extrudeSpeed = extrudeSpeed,
                                     extrudeSpeedDraft = extrudeSpeedDraft,
@@ -398,60 +516,36 @@ private fun IviControlPanelApp() {
                                         extrudeSpeedDraft = txt
                                         txt.toDoubleOrNull()?.takeIf { it > 0 }?.let { extrudeSpeed = it }
                                     },
-                                    onExtrude = { sign ->
-                                        val spd = extrudeSpeedDraft.toDoubleOrNull()?.takeIf { it > 0 } ?: extrudeSpeed
-                                        val verb = if (sign > 0) "Extruded" else "Retracted"
-                                        runAction("$verb ${extrudeLen.toInt()} mm @ ${spd.toInt()} mm/min") {
-                                            BridgeApi.extrude(bridgeUrl, extrudeLen * sign, spd)
-                                        }
-                                    }
+                                    onExtrude = onExtrudeAction
                                 )
                             }
                         }
                     } else {
                         MotionCard(
-                            enabled = serialReady && !busy,
+                            enabled = controlsEnabled,
+                            homeArmed = armedAction == "home",
+                            motorsArmed = armedAction == "motors",
                             jogStep = jogStep,
                             speedMode = speedMode,
                             zPos = serial?.z,
                             onStepChange = { jogStep = it },
                             onSpeedChange = { speedMode = it },
-                            onJog = { axis, sign ->
-                                val feed = when (speedMode) {
-                                    0 -> if (axis == "Z") 600.0 else 1200.0
-                                    2 -> if (axis == "Z") 3000.0 else 6000.0
-                                    else -> if (axis == "Z") 1500.0 else 3000.0
-                                }
-                                val dist = jogStep * sign
-                                runAction("Jogged $axis ${if (dist > 0) "+" else ""}$dist mm") {
-                                    BridgeApi.jog(bridgeUrl, axis, dist, feed)
-                                }
-                            },
-                            onHome = { runAction("Homed all towers (G28)") { BridgeApi.home(bridgeUrl) } },
-                            onMotorsOff = { runAction("Motors disabled (M84)") { BridgeApi.motorsOff(bridgeUrl) } }
+                            onJog = onJogAction,
+                            onHome = onHomeAction,
+                            onMotorsOff = onMotorsOffAction
                         )
                         ThermalCard(
-                            enabled = serialReady && !busy,
+                            enabled = controlsEnabled,
                             nozzleDraft = nozzleDraft,
                             bedDraft = bedDraft,
                             onNozzleDraft = { nozzleDraft = it },
                             onBedDraft = { bedDraft = it },
-                            onSetTemp = { heater, target ->
-                                runAction("${heater.replaceFirstChar { it.uppercase() }} set to $target°C") {
-                                    BridgeApi.setTemp(bridgeUrl, heater, target)
-                                }
-                            },
-                            onCooldownAll = {
-                                runAction("Cooldown: Nozzle 0°C, Bed 0°C, Fan Off") {
-                                    BridgeApi.setTemp(bridgeUrl, "nozzle", 0)
-                                    BridgeApi.setTemp(bridgeUrl, "bed", 0)
-                                    BridgeApi.setFan(bridgeUrl, 0)
-                                }
-                            }
+                            onSetTemp = onTempAction,
+                            onCooldownAll = onCooldownAction
                         )
                         ExtruderCard(
-                            enabled = serialReady && !busy,
-                            nozzleActual = serial?.nozzleActual ?: 0.0,
+                            enabled = extrudeEnabled,
+                            hotendHot = hotendHot,
                             extrudeLen = extrudeLen,
                             extrudeSpeed = extrudeSpeed,
                             extrudeSpeedDraft = extrudeSpeedDraft,
@@ -464,16 +558,10 @@ private fun IviControlPanelApp() {
                                 extrudeSpeedDraft = txt
                                 txt.toDoubleOrNull()?.takeIf { it > 0 }?.let { extrudeSpeed = it }
                             },
-                            onExtrude = { sign ->
-                                val spd = extrudeSpeedDraft.toDoubleOrNull()?.takeIf { it > 0 } ?: extrudeSpeed
-                                val verb = if (sign > 0) "Extruded" else "Retracted"
-                                runAction("$verb ${extrudeLen.toInt()} mm @ ${spd.toInt()} mm/min") {
-                                    BridgeApi.extrude(bridgeUrl, extrudeLen * sign, spd)
-                                }
-                            }
+                            onExtrude = onExtrudeAction
                         )
                         BabystepFanCard(
-                            enabled = serialReady && !busy,
+                            enabled = controlsEnabled,
                             fanPercent = serial?.fanPercent ?: 0,
                             onBabystep = { d ->
                                 runAction("Z babystep ${if (d > 0) "+" else ""}$d mm") {
@@ -485,15 +573,68 @@ private fun IviControlPanelApp() {
                             }
                         )
                     }
-                    // Extra ~3/8" breathing room below the last card so OS nav/dock never clips it.
                     Spacer(Modifier.height(64.dp))
                 }
             }
 
             1 -> {
+                FilamentWizardTab(
+                    modifier = Modifier.weight(1f),
+                    controlsEnabled = controlsEnabled,
+                    extrudeEnabled = extrudeEnabled,
+                    hotendHot = hotendHot,
+                    busy = busy,
+                    nozzleActual = serial?.nozzleActual ?: 0.0,
+                    nozzleTarget = serial?.nozzleTarget ?: 0.0,
+                    material = wizardMaterial,
+                    bowdenLen = bowdenLen,
+                    statusNote = wizardNote,
+                    onHeat = { mat, target ->
+                        wizardMaterial = mat
+                        nozzleDraft = target.toString()
+                        wizardNote = "Heating nozzle to ${target}°C for $mat... wait until ≥ ${COLD_EXTRUSION_MIN_C.toInt()}°C."
+                        runAction("Nozzle target set to ${target}°C") {
+                            BridgeApi.setTemp(bridgeUrl, "nozzle", target)
+                        }
+                    },
+                    onBowdenLen = { bowdenLen = it },
+                    onUnload = {
+                        runAction("Filament unloaded cleanly.") {
+                            wizardNote = "Tip-shaping micro-purge (+5 mm)..."
+                            BridgeApi.extrude(bridgeUrl, 5.0, 120.0)
+                            wizardNote = "Fast pull out of melt zone (-20 mm)..."
+                            BridgeApi.extrude(bridgeUrl, -20.0, 900.0)
+                            extrudeChunked(-bowdenLen.toDouble(), 1200.0, "Retracting Bowden (-$bowdenLen mm)")
+                            wizardNote = "Unloaded! Pull old spool free, cut new tip at 45°, feed past filament sensor into gears, then tap Load."
+                        }
+                    },
+                    onLoad = {
+                        runAction("Filament loaded and purged.") {
+                            val fastFeed = max(50, bowdenLen - 30)
+                            extrudeChunked(fastFeed.toDouble(), 1200.0, "Fast-feeding Bowden (+$fastFeed mm)")
+                            wizardNote = "Slow purging melt zone (+40 mm @ 120 mm/min)..."
+                            BridgeApi.extrude(bridgeUrl, 40.0, 120.0)
+                            wizardNote = "Loaded & purged! Tap Purge +15 mm until color is clean, or tap Cooldown Nozzle."
+                        }
+                    },
+                    onPurgeMore = {
+                        runAction("Purged +15 mm @ 120 mm/min") {
+                            BridgeApi.extrude(bridgeUrl, 15.0, 120.0)
+                        }
+                    },
+                    onCooldownNozzle = {
+                        runAction("Nozzle target set to 0°C") {
+                            BridgeApi.setTemp(bridgeUrl, "nozzle", 0)
+                        }
+                    }
+                )
+            }
+
+            2 -> {
                 ConsoleTab(
                     modifier = Modifier.weight(1f),
-                    enabled = serialReady && !busy,
+                    enabled = controlsEnabled,
+                    clearEnabled = serialReady && !busy,
                     lines = serial?.console ?: emptyList(),
                     gcodeDraft = gcodeDraft,
                     onDraftChange = { gcodeDraft = it },
@@ -504,7 +645,9 @@ private fun IviControlPanelApp() {
                             runAction("Sent: $line") { BridgeApi.sendGCode(bridgeUrl, line) }
                         }
                     },
-                    onClear = { runAction("Console cleared") { BridgeApi.clearConsole(bridgeUrl) } }
+                    onClear = {
+                        runAction("Console cleared", allowWhilePrinting = true) { BridgeApi.clearConsole(bridgeUrl) }
+                    }
                 )
             }
 
@@ -515,18 +658,18 @@ private fun IviControlPanelApp() {
                     busy = busy,
                     onToggleTransform = {
                         val next = !(state?.autoTransform ?: true)
-                        runAction("Auto-transform ${if (next) "ON" else "OFF"}") {
+                        runAction("Auto-transform ${if (next) "ON" else "OFF"}", allowWhilePrinting = true) {
                             BridgeApi.updateSettings(bridgeUrl, autoTransform = next)
                         }
                     },
                     onToggleUnique = {
                         val next = !(state?.uniqueNames ?: true)
-                        runAction("Unique names ${if (next) "ON" else "OFF"}") {
+                        runAction("Unique names ${if (next) "ON" else "OFF"}", allowWhilePrinting = true) {
                             BridgeApi.updateSettings(bridgeUrl, uniqueNames = next)
                         }
                     },
                     onClearHistory = {
-                        runAction("Cleared upload history") { BridgeApi.clearHistory(bridgeUrl) }
+                        runAction("Cleared upload history", allowWhilePrinting = true) { BridgeApi.clearHistory(bridgeUrl) }
                     }
                 )
             }
@@ -535,10 +678,10 @@ private fun IviControlPanelApp() {
 }
 
 @Composable
-private fun StatusPill(label: String, ok: Boolean) {
+private fun StatusPill(label: String, bg: Color) {
     Box(
         modifier = Modifier
-            .background(if (ok) Color(0xFF064E3B) else Color(0xFF451A03), RoundedCornerShape(999.dp))
+            .background(bg, RoundedCornerShape(999.dp))
             .padding(horizontal = 10.dp, vertical = 4.dp)
     ) {
         Text(label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
@@ -574,9 +717,9 @@ private fun TabButton(title: String, selected: Boolean, modifier: Modifier, onCl
         ),
         border = BorderStroke(1.dp, if (selected) AccentCyanLight else BorderSlate),
         shape = RoundedCornerShape(8.dp),
-        contentPadding = PaddingValues(vertical = 8.dp, horizontal = 6.dp)
+        contentPadding = PaddingValues(vertical = 8.dp, horizontal = 4.dp)
     ) {
-        Text(title, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+        Text(title, fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
     }
 }
 
@@ -584,6 +727,8 @@ private fun TabButton(title: String, selected: Boolean, modifier: Modifier, onCl
 @Composable
 private fun MotionCard(
     enabled: Boolean,
+    homeArmed: Boolean,
+    motorsArmed: Boolean,
     jogStep: Double,
     speedMode: Int,
     zPos: Double?,
@@ -608,10 +753,15 @@ private fun MotionCard(
                 OutlinedButton(
                     onClick = onMotorsOff,
                     enabled = enabled,
+                    border = BorderStroke(if (motorsArmed) 2.dp else 1.dp, if (motorsArmed) Color(0xFFFEF08A) else BorderSlate),
                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                     shape = RoundedCornerShape(8.dp)
                 ) {
-                    Text("Motors Off", fontSize = 11.sp, color = TextPrimary)
+                    Text(
+                        if (motorsArmed) "Confirm M84?" else "Motors Off",
+                        fontSize = 11.sp,
+                        color = if (motorsArmed) Color(0xFFFEF08A) else TextPrimary
+                    )
                 }
             }
 
@@ -639,11 +789,12 @@ private fun MotionCard(
                             onClick = onHome,
                             enabled = enabled,
                             modifier = Modifier.size(64.dp, 48.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = AccentCyan),
+                            colors = ButtonDefaults.buttonColors(containerColor = if (homeArmed) AccentAmber else AccentCyan),
+                            border = if (homeArmed) BorderStroke(2.dp, Color(0xFFFEF08A)) else null,
                             shape = RoundedCornerShape(10.dp),
                             contentPadding = PaddingValues(0.dp)
                         ) {
-                            Text("HOME", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text(if (homeArmed) "SURE?" else "HOME", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                         JogBtn("+X", enabled) { onJog("X", 1) }
                     }
@@ -792,7 +943,7 @@ private fun ThermalCard(
 @Composable
 private fun ExtruderCard(
     enabled: Boolean,
-    nozzleActual: Double,
+    hotendHot: Boolean,
     extrudeLen: Double,
     extrudeSpeed: Double,
     extrudeSpeedDraft: String,
@@ -814,9 +965,10 @@ private fun ExtruderCard(
             ) {
                 Text("Filament / Extruder", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
                 Text(
-                    if (nozzleActual < 170.0) "Heat ≥170°C first" else "Hotend ready",
+                    if (hotendHot) "Hotend ready" else "Locked < ${COLD_EXTRUSION_MIN_C.toInt()}°C",
                     fontSize = 11.sp,
-                    color = if (nozzleActual < 170.0) Color(0xFFFBBF24) else Color(0xFF34D399)
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (hotendHot) Color(0xFF34D399) else Color(0xFFFBBF24)
                 )
             }
 
@@ -868,6 +1020,156 @@ private fun ExtruderCard(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
+private fun FilamentWizardTab(
+    modifier: Modifier,
+    controlsEnabled: Boolean,
+    extrudeEnabled: Boolean,
+    hotendHot: Boolean,
+    busy: Boolean,
+    nozzleActual: Double,
+    nozzleTarget: Double,
+    material: String,
+    bowdenLen: Int,
+    statusNote: String,
+    onHeat: (String, Int) -> Unit,
+    onBowdenLen: (Int) -> Unit,
+    onUnload: () -> Unit,
+    onLoad: () -> Unit,
+    onPurgeMore: () -> Unit,
+    onCooldownNozzle: () -> Unit
+) {
+    val scroll = rememberScrollState()
+    Column(
+        modifier = modifier.verticalScroll(scroll),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Card(
+            colors = CardDefaults.cardColors(containerColor = CardDark),
+            border = BorderStroke(1.dp, BorderSlate),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Filament Change Wizard", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                    Text(
+                        String.format(Locale.US, "%.1f°C / %.0f°C", nozzleActual, nozzleTarget),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (hotendHot) Color(0xFF34D399) else Color(0xFFFBBF24)
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(BgDark, RoundedCornerShape(8.dp))
+                        .padding(10.dp)
+                ) {
+                    Text(statusNote, fontSize = 12.sp, color = Color(0xFFE0F2FE))
+                }
+
+                // Step 1
+                Text("Step 1 — Select Material & Heat", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Button(
+                        onClick = { onHeat("PLA", 220) },
+                        enabled = controlsEnabled,
+                        colors = ButtonDefaults.buttonColors(containerColor = if (material == "PLA") Color(0xFF7F1D1D) else Color(0xFF334155)),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("Heat PLA (220°C)", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Button(
+                        onClick = { onHeat("PETG", 240) },
+                        enabled = controlsEnabled,
+                        colors = ButtonDefaults.buttonColors(containerColor = if (material == "PETG") Color(0xFF7F1D1D) else Color(0xFF334155)),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("Heat PETG (240°C)", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+                Text("Bowden Tube Length", fontSize = 11.sp, color = TextMuted)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf(350, 450, 550).forEach { len ->
+                        ChoiceChipBtn("${len}mm", bowdenLen == len) { onBowdenLen(len) }
+                    }
+                }
+
+                // Step 2
+                Text("Step 2 — Unload Old Filament", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                Text(
+                    "Micro-purges +5 mm, pulls -20 mm fast out of the melt zone to prevent clogs, then retracts -$bowdenLen mm.",
+                    fontSize = 11.sp,
+                    color = TextMuted
+                )
+                Button(
+                    onClick = onUnload,
+                    enabled = extrudeEnabled,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = AccentAmber),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text(
+                        if (busy) "Working..." else "Unload Old Filament (-${bowdenLen + 20} mm)",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp
+                    )
+                }
+
+                // Step 3
+                Text("Step 3 — Insert New Spool", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                Text(
+                    "1. Pull old filament free.\n2. Cut new tip at 45°.\n3. Feed through filament sensor until gears grip, then tap Load below.",
+                    fontSize = 11.sp,
+                    color = TextMuted
+                )
+
+                // Step 4
+                Text("Step 4 — Load, Purge & Finish", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                Button(
+                    onClick = onLoad,
+                    enabled = extrudeEnabled,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = AccentGreen),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text(
+                        if (busy) "Working..." else "Load & Purge (+${bowdenLen + 10} mm)",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    Button(
+                        onClick = onPurgeMore,
+                        enabled = extrudeEnabled,
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = AccentCyan),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("Purge +15 mm", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                    OutlinedButton(
+                        onClick = onCooldownNozzle,
+                        enabled = controlsEnabled,
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("Cooldown Nozzle", fontSize = 12.sp, color = AccentCyanLight)
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(64.dp))
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
 private fun BabystepFanCard(
     enabled: Boolean,
     fanPercent: Int,
@@ -908,6 +1210,7 @@ private fun BabystepFanCard(
 private fun ConsoleTab(
     modifier: Modifier,
     enabled: Boolean,
+    clearEnabled: Boolean,
     lines: List<ConsoleLine>,
     gcodeDraft: String,
     onDraftChange: (String) -> Unit,
@@ -934,7 +1237,7 @@ private fun ConsoleTab(
                 }
                 OutlinedButton(
                     onClick = onClear,
-                    enabled = enabled,
+                    enabled = clearEnabled,
                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                     shape = RoundedCornerShape(8.dp)
                 ) {
@@ -947,6 +1250,7 @@ private fun ConsoleTab(
                     value = gcodeDraft,
                     onValueChange = onDraftChange,
                     singleLine = true,
+                    enabled = enabled,
                     modifier = Modifier.weight(1f),
                     label = { Text("Marlin G-code (e.g. G28, M105)", fontSize = 11.sp) }
                 )

@@ -23,7 +23,10 @@
 		uploadGCodeFile
 	} from './api.ts';
 
-	type TabId = 'control' | 'console' | 'upload';
+	type TabId = 'control' | 'filament' | 'console' | 'upload';
+	type ConfirmAction = 'estop' | 'home' | 'motors' | null;
+
+	const COLD_EXTRUSION_MIN_C = 175;
 
 	let activeTab = $state<TabId>('control');
 	let bridgeUrl = $state('http://127.0.0.1:5000');
@@ -34,6 +37,10 @@
 	let banner = $state('');
 	let bannerKind = $state<'info' | 'ok' | 'err'>('info');
 
+	// Two-tap safety confirmation state (auto-clears after 4s)
+	let armedAction = $state<ConfirmAction>(null);
+	let armTimer: ReturnType<typeof setTimeout> | null = null;
+
 	// Machine control settings
 	let jogStep = $state(10);
 	let jogSpeedMode = $state<'slow' | 'normal' | 'fast'>('normal');
@@ -42,6 +49,12 @@
 	let extrudeLen = $state(10);
 	let extrudeSpeed = $state(180);
 	let extrudeSpeedInput = $state('180');
+
+	// Filament Change Wizard settings
+	let wizardMaterial = $state<'PLA' | 'PETG'>('PLA');
+	let wizardTarget = $state(220);
+	let bowdenLen = $state(450);
+	let wizardStepNote = $state('Step 1: Pick PLA or PETG and heat the nozzle before unloading or loading.');
 
 	// Console
 	let gcodeInput = $state('');
@@ -54,6 +67,14 @@
 	const serial = $derived<SerialState | null>(stateData?.serial ?? null);
 	const serialReady = $derived(Boolean(serial?.enabled && serial?.connected));
 	const wifiOnline = $derived(Boolean(stateData?.status?.reachable));
+	const isPrinting = $derived(
+		Boolean(serialReady && serial?.working_status && serial.working_status !== 'IDLE')
+	);
+	const controlsEnabled = $derived(serialReady && !busy && !isPrinting);
+	const hotendHot = $derived(
+		Boolean(serialReady && serial && serial.nozzle_actual >= COLD_EXTRUSION_MIN_C)
+	);
+	const extrudeEnabled = $derived(controlsEnabled && hotendHot);
 
 	function xyFeedrate(): number {
 		if (jogSpeedMode === 'slow') return 1200;
@@ -76,6 +97,29 @@
 		if (s && stateData) {
 			stateData = { ...stateData, serial: s };
 		}
+	}
+
+	function clearArm() {
+		if (armTimer) {
+			clearTimeout(armTimer);
+			armTimer = null;
+		}
+		armedAction = null;
+	}
+
+	function requireTwoTap(action: Exclude<ConfirmAction, null>, label: string, run: () => Promise<void>) {
+		if (armedAction === action) {
+			clearArm();
+			void run();
+			return;
+		}
+		clearArm();
+		armedAction = action;
+		setNotice('info', `Tap "${label}" again within 4s to confirm.`);
+		armTimer = setTimeout(() => {
+			armedAction = null;
+			armTimer = null;
+		}, 4000);
 	}
 
 	async function refresh(silent = false) {
@@ -112,6 +156,10 @@
 			setNotice('err', 'USB serial is not connected on ivi-bridge.');
 			return;
 		}
+		if (isPrinting) {
+			setNotice('err', `Controls locked while printing (${serial?.working_status}).`);
+			return;
+		}
 		busy = true;
 		try {
 			const res = await fn();
@@ -144,10 +192,7 @@
 	}
 
 	async function doCooldownAll() {
-		if (!serialReady) {
-			setNotice('err', 'USB serial is not connected on ivi-bridge.');
-			return;
-		}
+		if (!controlsEnabled) return;
 		busy = true;
 		try {
 			await serialSetTemp(bridgeUrl, 'nozzle', 0);
@@ -163,6 +208,10 @@
 	}
 
 	async function doExtrude(sign: 1 | -1) {
+		if (!hotendHot) {
+			setNotice('err', `Cold extrusion blocked: heat nozzle to at least ${COLD_EXTRUSION_MIN_C}°C first.`);
+			return;
+		}
 		const amount = extrudeLen * sign;
 		const parsedSpeed = Number(extrudeSpeedInput);
 		const speed = Number.isFinite(parsedSpeed) && parsedSpeed > 0 ? parsedSpeed : extrudeSpeed;
@@ -196,6 +245,82 @@
 		}
 	}
 
+	// Filament Change Wizard actions (chunked <= 150 mm per bridge call)
+	async function extrudeChunked(totalMm: number, speed: number, label: string) {
+		const sign = totalMm >= 0 ? 1 : -1;
+		let remaining = Math.abs(totalMm);
+		const chunkSize = 150;
+		const totalChunks = Math.max(1, Math.ceil(remaining / chunkSize));
+		let idx = 0;
+		while (remaining > 0.01) {
+			idx++;
+			const step = Math.min(chunkSize, remaining) * sign;
+			wizardStepNote = `${label} (${idx}/${totalChunks})...`;
+			const res = await serialExtrude(bridgeUrl, step, speed);
+			applySerial(res.serial);
+			remaining -= Math.abs(step);
+		}
+	}
+
+	async function wizardHeat(mat: 'PLA' | 'PETG', target: number) {
+		wizardMaterial = mat;
+		wizardTarget = target;
+		nozzleInput = String(target);
+		wizardStepNote = `Heating nozzle to ${target}°C for ${mat}... wait until actual temp ≥ ${COLD_EXTRUSION_MIN_C}°C.`;
+		await doSetTemp('nozzle', target);
+	}
+
+	async function wizardUnload() {
+		if (!extrudeEnabled) {
+			setNotice('err', `Heat nozzle to ≥ ${COLD_EXTRUSION_MIN_C}°C before unloading.`);
+			return;
+		}
+		busy = true;
+		try {
+			wizardStepNote = 'Tip-shaping micro-purge (+5 mm)...';
+			await serialExtrude(bridgeUrl, 5, 120);
+			wizardStepNote = 'Fast pull out of melt zone (-20 mm)...';
+			await serialExtrude(bridgeUrl, -20, 900);
+			await extrudeChunked(-bowdenLen, 1200, `Retracting Bowden (-${bowdenLen} mm)`);
+			wizardStepNote = 'Unloaded! Pull old spool out, cut new filament at 45°, feed through filament sensor until gears grip, then click Load.';
+			setNotice('ok', 'Filament unloaded cleanly.');
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			wizardStepNote = `Unload stopped: ${msg}`;
+			setNotice('err', msg);
+		} finally {
+			busy = false;
+		}
+	}
+
+	async function wizardLoad() {
+		if (!extrudeEnabled) {
+			setNotice('err', `Heat nozzle to ≥ ${COLD_EXTRUSION_MIN_C}°C before loading.`);
+			return;
+		}
+		busy = true;
+		try {
+			const fastFeed = Math.max(50, bowdenLen - 30);
+			await extrudeChunked(fastFeed, 1200, `Fast-feeding Bowden (+${fastFeed} mm)`);
+			wizardStepNote = 'Slow purging melt zone (+40 mm @ 120 mm/min)...';
+			const res = await serialExtrude(bridgeUrl, 40, 120);
+			applySerial(res.serial);
+			wizardStepNote = 'Loaded & purged! Click "Purge +15 mm" if color is not clean yet, or "Cooldown Nozzle" when done.';
+			setNotice('ok', 'Filament loaded and purged.');
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			wizardStepNote = `Load stopped: ${msg}`;
+			setNotice('err', msg);
+		} finally {
+			busy = false;
+		}
+	}
+
+	async function wizardPurgeMore() {
+		if (!extrudeEnabled) return;
+		await runSerial('Purged +15 mm @ 120 mm/min', () => serialExtrude(bridgeUrl, 15, 120));
+	}
+
 	async function doSendGCode(cmd?: string) {
 		const line = (cmd ?? gcodeInput).trim();
 		if (!line) return;
@@ -204,7 +329,16 @@
 	}
 
 	async function doClearConsole() {
-		await runSerial('Console cleared', () => serialClearConsole(bridgeUrl));
+		busy = true;
+		try {
+			const res = await serialClearConsole(bridgeUrl);
+			applySerial(res.serial);
+			setNotice('ok', 'Console cleared');
+		} catch (err) {
+			setNotice('err', err instanceof Error ? err.message : String(err));
+		} finally {
+			busy = false;
+		}
 	}
 
 	async function toggleSetting(key: 'auto_transform' | 'unique_names') {
@@ -273,6 +407,7 @@
 		}, 2000);
 		return () => {
 			stopped = true;
+			clearArm();
 			clearInterval(timer);
 		};
 	});
@@ -293,13 +428,18 @@
 				<div class={wifiOnline ? 'badge badge-ok' : 'badge badge-off'}>
 					<text class="badge-text">{wifiOnline ? 'Wi-Fi: Online' : 'Wi-Fi: Offline'}</text>
 				</div>
-				<div class={serialReady ? 'badge badge-ok' : 'badge badge-warn'}>
+				<div class={isPrinting ? 'badge badge-print' : serialReady ? 'badge badge-ok' : 'badge badge-warn'}>
 					<text class="badge-text">
 						{serialReady ? `USB: ${serial?.working_status || 'Connected'}` : 'USB: Disconnected'}
 					</text>
 				</div>
-				<button class="btn-estop" onclick={doEStop}>
-					<text class="btn-estop-text">E-STOP (M112)</text>
+				<button
+					class={armedAction === 'estop' ? 'btn-estop-armed' : 'btn-estop'}
+					onclick={() => requireTwoTap('estop', 'Confirm E-STOP?', doEStop)}
+				>
+					<text class="btn-estop-text">
+						{armedAction === 'estop' ? 'CONFIRM E-STOP!' : 'E-STOP (M112)'}
+					</text>
 				</button>
 			</div>
 		</div>
@@ -322,6 +462,15 @@
 			</button>
 		</div>
 	</div>
+
+	<!-- Print-Active Safety Lockout Banner -->
+	{#if isPrinting}
+		<div class="lock-banner">
+			<text class="lock-banner-text">
+				PRINT IN PROGRESS ({serial?.working_status}) — Monitor-only mode: motion, heater, filament, and console controls are locked to protect your print.
+			</text>
+		</div>
+	{/if}
 
 	<!-- Live Telemetry Strip -->
 	<div class="telemetry-strip">
@@ -384,6 +533,14 @@
 				</text>
 			</button>
 			<button
+				class={activeTab === 'filament' ? 'tab-btn tab-active' : 'tab-btn'}
+				onclick={() => (activeTab = 'filament')}
+			>
+				<text class={activeTab === 'filament' ? 'tab-text-active' : 'tab-text'}>
+					Filament Wizard
+				</text>
+			</button>
+			<button
 				class={activeTab === 'console' ? 'tab-btn tab-active' : 'tab-btn'}
 				onclick={() => (activeTab = 'console')}
 			>
@@ -439,25 +596,31 @@
 								<div class="xy-pad">
 									<div class="xy-row">
 										<div class="xy-spacer"></div>
-										<button class="jog-btn" disabled={busy || !serialReady} onclick={() => doJog('Y', 1)}>
+										<button class="jog-btn" disabled={!controlsEnabled} onclick={() => doJog('Y', 1)}>
 											<text class="jog-btn-text">+Y</text>
 										</button>
 										<div class="xy-spacer"></div>
 									</div>
 									<div class="xy-row">
-										<button class="jog-btn" disabled={busy || !serialReady} onclick={() => doJog('X', -1)}>
+										<button class="jog-btn" disabled={!controlsEnabled} onclick={() => doJog('X', -1)}>
 											<text class="jog-btn-text">-X</text>
 										</button>
-										<button class="jog-home" disabled={busy || !serialReady} onclick={doHome}>
-											<text class="jog-home-text">HOME</text>
+										<button
+											class={armedAction === 'home' ? 'jog-home-armed' : 'jog-home'}
+											disabled={!controlsEnabled}
+											onclick={() => requireTwoTap('home', 'Confirm HOME?', doHome)}
+										>
+											<text class="jog-home-text">
+												{armedAction === 'home' ? 'SURE?' : 'HOME'}
+											</text>
 										</button>
-										<button class="jog-btn" disabled={busy || !serialReady} onclick={() => doJog('X', 1)}>
+										<button class="jog-btn" disabled={!controlsEnabled} onclick={() => doJog('X', 1)}>
 											<text class="jog-btn-text">+X</text>
 										</button>
 									</div>
 									<div class="xy-row">
 										<div class="xy-spacer"></div>
-										<button class="jog-btn" disabled={busy || !serialReady} onclick={() => doJog('Y', -1)}>
+										<button class="jog-btn" disabled={!controlsEnabled} onclick={() => doJog('Y', -1)}>
 											<text class="jog-btn-text">-Y</text>
 										</button>
 										<div class="xy-spacer"></div>
@@ -467,7 +630,7 @@
 								<!-- Z Column -->
 								<div class="z-col">
 									<text class="mini-label">Z AXIS</text>
-									<button class="jog-btn jog-z" disabled={busy || !serialReady} onclick={() => doJog('Z', 1)}>
+									<button class="jog-btn jog-z" disabled={!controlsEnabled} onclick={() => doJog('Z', 1)}>
 										<text class="jog-btn-text">+Z Up</text>
 									</button>
 									<div class="z-readout">
@@ -475,7 +638,7 @@
 											{serialReady && serial ? `${serial.z.toFixed(1)}` : '—'}
 										</text>
 									</div>
-									<button class="jog-btn jog-z" disabled={busy || !serialReady} onclick={() => doJog('Z', -1)}>
+									<button class="jog-btn jog-z" disabled={!controlsEnabled} onclick={() => doJog('Z', -1)}>
 										<text class="jog-btn-text">-Z Down</text>
 									</button>
 								</div>
@@ -503,8 +666,14 @@
 										<text class={jogSpeedMode === 'fast' ? 'pill-text-on' : 'pill-text'}>Fast</text>
 									</button>
 								</div>
-								<button class="btn-secondary" disabled={busy || !serialReady} onclick={doMotorsOff}>
-									<text class="btn-text">Motors Off (M84)</text>
+								<button
+									class={armedAction === 'motors' ? 'btn-warn-armed' : 'btn-secondary'}
+									disabled={!controlsEnabled}
+									onclick={() => requireTwoTap('motors', 'Confirm Motors Off?', doMotorsOff)}
+								>
+									<text class="btn-text">
+										{armedAction === 'motors' ? 'Confirm M84?' : 'Motors Off (M84)'}
+									</text>
 								</button>
 							</div>
 						</div>
@@ -518,7 +687,7 @@
 									{#each [-0.05, -0.01, 0.01, 0.05] as d (d)}
 										<button
 											class="btn-secondary"
-											disabled={busy || !serialReady}
+											disabled={!controlsEnabled}
 											onclick={() => doBabystep(d)}
 										>
 											<text class="btn-text">{d > 0 ? `+${d.toFixed(2)}` : d.toFixed(2)}mm</text>
@@ -533,7 +702,7 @@
 									{#each [0, 25, 50, 75, 100] as pct (pct)}
 										<button
 											class={serial?.fan_percent === pct ? 'pill pill-on' : 'pill'}
-											disabled={busy || !serialReady}
+											disabled={!controlsEnabled}
 											onclick={() => doFan(pct)}
 										>
 											<text class={serial?.fan_percent === pct ? 'pill-text-on' : 'pill-text'}>
@@ -551,7 +720,7 @@
 						<div class="card">
 							<div class="card-head">
 								<text class="card-title">Temperature Control</text>
-								<button class="btn-cool" disabled={busy || !serialReady} onclick={doCooldownAll}>
+								<button class="btn-cool" disabled={!controlsEnabled} onclick={doCooldownAll}>
 									<text class="btn-cool-text">Cooldown All</text>
 								</button>
 							</div>
@@ -570,7 +739,7 @@
 									{#each [0, 180, 210, 220, 240] as t (t)}
 										<button
 											class={t === 0 ? 'btn-off-sm' : 'btn-heat'}
-											disabled={busy || !serialReady}
+											disabled={!controlsEnabled}
 											onclick={() => {
 												nozzleInput = String(t);
 												void doSetTemp('nozzle', t);
@@ -588,7 +757,7 @@
 									</div>
 									<button
 										class="btn-primary"
-										disabled={busy || !serialReady}
+										disabled={!controlsEnabled}
 										onclick={() => doSetTemp('nozzle', Number(nozzleInput) || 0)}
 									>
 										<text class="btn-primary-text">Set</text>
@@ -610,7 +779,7 @@
 									{#each [0, 50, 60, 75, 80] as t (t)}
 										<button
 											class={t === 0 ? 'btn-off-sm' : 'btn-bed'}
-											disabled={busy || !serialReady}
+											disabled={!controlsEnabled}
 											onclick={() => {
 												bedInput = String(t);
 												void doSetTemp('bed', t);
@@ -628,7 +797,7 @@
 									</div>
 									<button
 										class="btn-primary"
-										disabled={busy || !serialReady}
+										disabled={!controlsEnabled}
 										onclick={() => doSetTemp('bed', Number(bedInput) || 0)}
 									>
 										<text class="btn-primary-text">Set</text>
@@ -641,10 +810,10 @@
 						<div class="card">
 							<div class="card-head">
 								<text class="card-title">Filament / Extruder</text>
-								<text class="hint">
-									{serial && serial.nozzle_actual < 170
-										? 'Heat nozzle ≥170°C before extruding'
-										: 'Nozzle hot — ready to extrude'}
+								<text class={hotendHot ? 'hint-ok' : 'hint-warn'}>
+									{hotendHot
+										? 'Nozzle hot — ready to extrude'
+										: `Locked until nozzle ≥ ${COLD_EXTRUSION_MIN_C}°C`}
 								</text>
 							</div>
 
@@ -693,17 +862,114 @@
 							<div class="extrude-actions">
 								<button
 									class="btn-retract"
-									disabled={busy || !serialReady}
+									disabled={!extrudeEnabled}
 									onclick={() => doExtrude(-1)}
 								>
 									<text class="btn-primary-text">Retract -{extrudeLen} mm</text>
 								</button>
 								<button
 									class="btn-extrude"
-									disabled={busy || !serialReady}
+									disabled={!extrudeEnabled}
 									onclick={() => doExtrude(1)}
 								>
 									<text class="btn-primary-text">Extrude +{extrudeLen} mm</text>
+								</button>
+							</div>
+						</div>
+					</div>
+				</div>
+			{:else if activeTab === 'filament'}
+				<!-- Guided Filament Change Wizard -->
+				<div class="col">
+					<div class="card">
+						<div class="card-head">
+							<text class="card-title">Guided Filament Change Wizard (Bowden Delta)</text>
+							<text class={hotendHot ? 'hint-ok' : 'hint-warn'}>
+								{serialReady && serial
+									? `Nozzle: ${serial.nozzle_actual.toFixed(1)}°C / ${serial.nozzle_target.toFixed(0)}°C`
+									: 'No USB'}
+							</text>
+						</div>
+
+						<div class="wizard-status">
+							<text class="wizard-status-text">{wizardStepNote}</text>
+						</div>
+
+						<!-- Step 1: Material & Heat -->
+						<div class="wizard-step">
+							<text class="step-heading">Step 1 — Select Material & Heat Nozzle</text>
+							<div class="sub-row">
+								<div class="pill-group">
+									<button
+										class={wizardMaterial === 'PLA' ? 'btn-heat' : 'btn-secondary'}
+										disabled={!controlsEnabled}
+										onclick={() => wizardHeat('PLA', 220)}
+									>
+										<text class="btn-text">Heat PLA (220°C)</text>
+									</button>
+									<button
+										class={wizardMaterial === 'PETG' ? 'btn-heat' : 'btn-secondary'}
+										disabled={!controlsEnabled}
+										onclick={() => wizardHeat('PETG', 240)}
+									>
+										<text class="btn-text">Heat PETG (240°C)</text>
+									</button>
+								</div>
+								<div class="pill-group">
+									<text class="mini-label">Bowden Length:</text>
+									{#each [350, 450, 550] as len (len)}
+										<button
+											class={bowdenLen === len ? 'pill pill-on' : 'pill'}
+											onclick={() => (bowdenLen = len)}
+										>
+											<text class={bowdenLen === len ? 'pill-text-on' : 'pill-text'}>{len}mm</text>
+										</button>
+									{/each}
+								</div>
+							</div>
+						</div>
+
+						<!-- Step 2: Unload Old Filament -->
+						<div class="wizard-step">
+							<text class="step-heading">Step 2 — Unload Old Filament (Tip-Shaped Clean Pull)</text>
+							<text class="hint">
+								Purges +5 mm slowly, yanks -20 mm fast out of the melt zone to prevent clogs, then retracts -{bowdenLen} mm through the Bowden tube.
+							</text>
+							<div class="extrude-actions">
+								<button class="btn-retract" disabled={!extrudeEnabled} onclick={wizardUnload}>
+									<text class="btn-primary-text">
+										{busy ? 'Working...' : `Unload Old Filament (-${bowdenLen + 20} mm)`}
+									</text>
+								</button>
+							</div>
+						</div>
+
+						<!-- Step 3: Insert New Filament -->
+						<div class="wizard-step">
+							<text class="step-heading">Step 3 — Insert New Spool</text>
+							<text class="hint">
+								1. Pull the old filament completely free.  2. Trim the new filament tip at a 45° angle.  3. Feed it through the filament sensor and into the extruder gears until it grips, then click Load below.
+							</text>
+						</div>
+
+						<!-- Step 4: Load & Purge -->
+						<div class="wizard-step">
+							<text class="step-heading">Step 4 — Fast-Feed, Purge & Finish</text>
+							<div class="extrude-actions">
+								<button class="btn-extrude" disabled={!extrudeEnabled} onclick={wizardLoad}>
+									<text class="btn-primary-text">
+										{busy ? 'Working...' : `Load & Purge (+${bowdenLen + 10} mm)`}
+									</text>
+								</button>
+								<button class="btn-primary" disabled={!extrudeEnabled} onclick={wizardPurgeMore}>
+									<text class="btn-primary-text">Purge +15 mm More</text>
+								</button>
+								<button
+									class="btn-cool"
+									disabled={!controlsEnabled}
+									onclick={() => doSetTemp('nozzle', 0)}
+								>
+									<text class="btn-cool-text">Done — Cooldown Nozzle</text>
 								</button>
 							</div>
 						</div>
@@ -714,16 +980,16 @@
 					<div class="card-head">
 						<text class="card-title">Live Marlin G-Code Console</text>
 						<div class="pill-group">
-							<button class="btn-secondary" disabled={busy || !serialReady} onclick={() => doSendGCode('M105')}>
+							<button class="btn-secondary" disabled={!controlsEnabled} onclick={() => doSendGCode('M105')}>
 								<text class="btn-text">M105 Temps</text>
 							</button>
-							<button class="btn-secondary" disabled={busy || !serialReady} onclick={() => doSendGCode('M114')}>
+							<button class="btn-secondary" disabled={!controlsEnabled} onclick={() => doSendGCode('M114')}>
 								<text class="btn-text">M114 Pos</text>
 							</button>
-							<button class="btn-secondary" disabled={busy || !serialReady} onclick={() => doSendGCode('M115')}>
+							<button class="btn-secondary" disabled={!controlsEnabled} onclick={() => doSendGCode('M115')}>
 								<text class="btn-text">M115 Info</text>
 							</button>
-							<button class="btn-secondary" disabled={busy || !serialReady} onclick={() => doSendGCode('M503')}>
+							<button class="btn-secondary" disabled={!controlsEnabled} onclick={() => doSendGCode('M503')}>
 								<text class="btn-text">M503 EEPROM</text>
 							</button>
 							<button class="btn-secondary" disabled={busy || !serialReady} onclick={doClearConsole}>
@@ -741,7 +1007,7 @@
 								onchange={(e) => (gcodeInput = e.value)}
 							/>
 						</div>
-						<button class="btn-primary" disabled={busy || !serialReady} onclick={() => doSendGCode()}>
+						<button class="btn-primary" disabled={!controlsEnabled} onclick={() => doSendGCode()}>
 							<text class="btn-primary-text">Send G-Code</text>
 						</button>
 					</div>
@@ -922,6 +1188,11 @@
 		border-color: #10b981;
 	}
 
+	.badge-print {
+		background-color: #1e3a8a;
+		border-color: #38bdf8;
+	}
+
 	.badge-warn {
 		background-color: #451a03;
 		border-color: #f59e0b;
@@ -939,7 +1210,7 @@
 	}
 
 	.btn-estop {
-		background-color: #dc2626;
+		background-color: #991b1b;
 		border-width: 1px;
 		border-style: solid;
 		border-color: #f87171;
@@ -947,10 +1218,34 @@
 		padding: 6px 12px;
 	}
 
+	.btn-estop-armed {
+		background-color: #dc2626;
+		border-width: 2px;
+		border-style: solid;
+		border-color: #fef08a;
+		border-radius: 8px;
+		padding: 6px 14px;
+	}
+
 	.btn-estop-text {
 		font-size: 12px;
 		font-weight: 700;
 		color: #ffffff;
+	}
+
+	.lock-banner {
+		background-color: #1e3a8a;
+		border-width: 1px;
+		border-style: solid;
+		border-color: #38bdf8;
+		border-radius: 8px;
+		padding: 8px 14px;
+	}
+
+	.lock-banner-text {
+		font-size: 12px;
+		font-weight: 700;
+		color: #e0f2fe;
 	}
 
 	.conn-row {
@@ -1259,6 +1554,19 @@
 		border-radius: 10px;
 	}
 
+	.jog-home-armed {
+		width: 72px;
+		height: 52px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background-color: #d97706;
+		border-width: 2px;
+		border-style: solid;
+		border-color: #fef08a;
+		border-radius: 10px;
+	}
+
 	.jog-home-text {
 		font-size: 13px;
 		font-weight: 700;
@@ -1383,6 +1691,15 @@
 		padding: 6px 10px;
 	}
 
+	.btn-warn-armed {
+		background-color: #b45309;
+		border-width: 2px;
+		border-style: solid;
+		border-color: #fef08a;
+		border-radius: 6px;
+		padding: 6px 10px;
+	}
+
 	.btn-heat {
 		background-color: #7f1d1d;
 		border-width: 1px;
@@ -1468,6 +1785,51 @@
 	.hint {
 		font-size: 12px;
 		color: #94a3b8;
+	}
+
+	.hint-ok {
+		font-size: 12px;
+		font-weight: 600;
+		color: #34d399;
+	}
+
+	.hint-warn {
+		font-size: 12px;
+		font-weight: 600;
+		color: #fbbf24;
+	}
+
+	.wizard-status {
+		background-color: #0f172a;
+		border-width: 1px;
+		border-style: solid;
+		border-color: #38bdf8;
+		border-radius: 8px;
+		padding: 10px 12px;
+	}
+
+	.wizard-status-text {
+		font-size: 13px;
+		font-weight: 600;
+		color: #e0f2fe;
+	}
+
+	.wizard-step {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		background-color: #0f172a;
+		border-width: 1px;
+		border-style: solid;
+		border-color: #334155;
+		border-radius: 8px;
+		padding: 12px;
+	}
+
+	.step-heading {
+		font-size: 14px;
+		font-weight: 700;
+		color: #f8fafc;
 	}
 
 	.console-input-row {
