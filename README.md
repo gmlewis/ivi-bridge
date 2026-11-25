@@ -1,5 +1,9 @@
 # ivi-bridge
 
+<p align="center">
+  <img src="assets/ivi-bridge-mascot.png" alt="ivi-bridge Go Gopher Mascot with Delta 3D Printer" width="520" />
+</p>
+
 Zero-dependency Go bridge (Wi-Fi + USB Marlin serial), tuned OrcaSlicer profiles,
 native desktop control panel (`gpuix-svelte` + Bun), and native Android app
 (Kotlin + Jetpack Compose) for the **IVI Closed-Loop Delta 3D Printer**.

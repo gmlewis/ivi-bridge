@@ -1,0 +1,244 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 680" width="1200" height="680">
+  <defs>
+    <!-- Gopher vibrant sky-blue fur gradients -->
+    <radialGradient id="gopherBody" cx="42%" cy="32%" r="65%">
+      <stop offset="0%" stop-color="#38ccf8"/>
+      <stop offset="55%" stop-color="#0ea5e9"/>
+      <stop offset="100%" stop-color="#0284c7"/>
+    </radialGradient>
+    <radialGradient id="gopherEar" cx="40%" cy="35%" r="60%">
+      <stop offset="0%" stop-color="#38ccf8"/>
+      <stop offset="100%" stop-color="#0369a1"/>
+    </radialGradient>
+    <radialGradient id="eyeGrad" cx="38%" cy="35%" r="65%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="78%" stop-color="#f8f6ee"/>
+      <stop offset="100%" stop-color="#d6d3c4"/>
+    </radialGradient>
+    <linearGradient id="muzzleGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fde6b8"/>
+      <stop offset="100%" stop-color="#e5b878"/>
+    </linearGradient>
+    <linearGradient id="pawGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fde6b8"/>
+      <stop offset="100%" stop-color="#d9a55f"/>
+    </linearGradient>
+
+    <!-- Laptop silver gradients -->
+    <linearGradient id="laptopLid" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#e2e8f0"/>
+      <stop offset="55%" stop-color="#cbd5e1"/>
+      <stop offset="100%" stop-color="#94a3b8"/>
+    </linearGradient>
+    <linearGradient id="laptopBase" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#94a3b8"/>
+      <stop offset="100%" stop-color="#475569"/>
+    </linearGradient>
+
+    <!-- Delta printer frame & hardware gradients -->
+    <linearGradient id="printerFrame" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#334155"/>
+      <stop offset="55%" stop-color="#1e293b"/>
+      <stop offset="100%" stop-color="#0f172a"/>
+    </linearGradient>
+    <linearGradient id="towerGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#475569"/>
+      <stop offset="50%" stop-color="#1e293b"/>
+      <stop offset="100%" stop-color="#0f172a"/>
+    </linearGradient>
+    <linearGradient id="armGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f1f5f9"/>
+      <stop offset="50%" stop-color="#94a3b8"/>
+      <stop offset="100%" stop-color="#64748b"/>
+    </linearGradient>
+    <linearGradient id="cyanGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#7dd3fc"/>
+      <stop offset="55%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#0284c7"/>
+    </linearGradient>
+    <linearGradient id="brassGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#fef08a"/>
+      <stop offset="45%" stop-color="#f59e0b"/>
+      <stop offset="100%" stop-color="#b45309"/>
+    </linearGradient>
+    <radialGradient id="nozzleGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#fb923c" stop-opacity="0.95"/>
+      <stop offset="50%" stop-color="#f59e0b" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#f59e0b" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="printGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.45"/>
+      <stop offset="100%" stop-color="#38bdf8" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- ==================== GO GOPHER (Center-Left) ==================== -->
+  <g stroke="#0b0f19" stroke-linejoin="round" stroke-linecap="round">
+    <!-- Left & Right Ears -->
+    <ellipse cx="332" cy="148" rx="46" ry="44" fill="url(#gopherEar)" stroke-width="11"/>
+    <ellipse cx="336" cy="152" rx="22" ry="20" fill="#0369a1" stroke-width="5"/>
+    <ellipse cx="644" cy="144" rx="46" ry="44" fill="url(#gopherEar)" stroke-width="11"/>
+    <ellipse cx="640" cy="148" rx="22" ry="20" fill="#0369a1" stroke-width="5"/>
+
+    <!-- Main Gopher Head & Torso Silhouette (fluffy comic outline) -->
+    <path d="
+      M 294 282
+      C 286 196, 338 118, 428 100
+      C 454 94, 464 82, 488 86
+      C 510 90, 526 94, 548 100
+      C 634 120, 684 196, 682 288
+      C 688 358, 706 436, 696 518
+      C 686 588, 622 618, 494 618
+      C 368 618, 300 584, 290 508
+      C 282 440, 298 360, 294 282 Z"
+      fill="url(#gopherBody)" stroke-width="12"/>
+
+    <!-- Subtle top fur tuft highlights -->
+    <path d="M 438 116 C 460 106, 488 104, 512 114" fill="none" stroke="#7dd3fc" stroke-width="7" opacity="0.7"/>
+    <path d="M 380 134 C 398 124, 414 120, 426 122" fill="none" stroke="#7dd3fc" stroke-width="6" opacity="0.55"/>
+    <!-- Cheek fur tufts -->
+    <path d="M 314 396 C 328 408, 338 416, 344 428" fill="none" stroke="#0369a1" stroke-width="6" opacity="0.5"/>
+    <path d="M 664 388 C 652 404, 642 414, 636 426" fill="none" stroke="#0369a1" stroke-width="6" opacity="0.5"/>
+
+    <!-- HUGE Expressive Eyes (looking eagerly RIGHT toward the Delta printer!) -->
+    <!-- Left Eye -->
+    <ellipse cx="412" cy="272" rx="84" ry="88" fill="url(#eyeGrad)" stroke-width="11"/>
+    <!-- Left Pupil looking right -->
+    <ellipse cx="446" cy="284" rx="36" ry="40" fill="#0b0f19" stroke-width="4"/>
+    <ellipse cx="436" cy="268" rx="12" ry="13" fill="#ffffff" stroke="none"/>
+    <circle cx="458" cy="296" r="5" fill="#7dd3fc" stroke="none"/>
+
+    <!-- Right Eye -->
+    <ellipse cx="586" cy="268" rx="82" ry="86" fill="url(#eyeGrad)" stroke-width="11"/>
+    <!-- Right Pupil looking right -->
+    <ellipse cx="618" cy="282" rx="35" ry="39" fill="#0b0f19" stroke-width="4"/>
+    <ellipse cx="608" cy="266" rx="12" ry="13" fill="#ffffff" stroke="none"/>
+    <circle cx="628" cy="294" r="5" fill="#7dd3fc" stroke="none"/>
+
+    <!-- Buck Teeth -->
+    <rect x="478" y="390" width="32" height="52" rx="10" fill="#ffffff" stroke-width="8"/>
+    <rect x="510" y="390" width="32" height="52" rx="10" fill="#f8fafc" stroke-width="8"/>
+
+    <!-- Tan Muzzle & Glossy Black Nose -->
+    <path d="M 442 368 C 442 332, 578 332, 578 368 C 578 400, 540 406, 510 392 C 480 406, 442 400, 442 368 Z"
+      fill="url(#muzzleGrad)" stroke-width="9"/>
+    <ellipse cx="510" cy="346" rx="34" ry="22" fill="#0f172a" stroke-width="7"/>
+    <ellipse cx="502" cy="339" rx="11" ry="6" fill="#94a3b8" stroke="none" opacity="0.65"/>
+
+    <!-- Right Arm & Paw resting eagerly near laptop/printer -->
+    <path d="M 650 434 C 676 474, 650 538, 566 558 C 520 568, 492 544, 504 510 C 516 478, 580 474, 616 446"
+      fill="url(#gopherBody)" stroke-width="10"/>
+    <!-- Tan Paw on keyboard/desk -->
+    <path d="M 454 532 C 454 494, 540 486, 558 518 C 570 540, 552 566, 510 568 C 470 570, 454 556, 454 532 Z"
+      fill="url(#pawGrad)" stroke-width="9"/>
+    <line x1="484" y1="530" x2="478" y2="562" stroke-width="6"/>
+    <line x1="512" y1="532" x2="508" y2="565" stroke-width="6"/>
+    <line x1="536" y1="534" x2="534" y2="560" stroke-width="6"/>
+  </g>
+
+  <!-- ==================== USB CABLE (Laptop -> Delta Printer) ==================== -->
+  <g fill="none" stroke-linecap="round">
+    <path d="M 412 608 C 495 664, 632 666, 738 594" stroke="#0b0f19" stroke-width="24"/>
+    <path d="M 412 608 C 495 664, 632 666, 738 594" stroke="#334155" stroke-width="12"/>
+    <path d="M 416 604 C 496 658, 630 660, 734 590" stroke="#64748b" stroke-width="3" opacity="0.7"/>
+  </g>
+
+  <!-- ==================== LAPTOP (Front-Left) ==================== -->
+  <g stroke="#0b0f19" stroke-linejoin="round" stroke-linecap="round">
+    <!-- Laptop Base -->
+    <polygon points="88,582 396,626 518,574 260,536" fill="url(#laptopBase)" stroke-width="10"/>
+    <polygon points="88,582 396,626 396,646 92,602" fill="#334155" stroke-width="10"/>
+    <polygon points="396,626 518,574 518,592 396,646" fill="#1e293b" stroke-width="10"/>
+    <!-- USB Port Plug -->
+    <rect x="398" y="600" width="28" height="18" rx="4" fill="#0f172a" stroke-width="6"/>
+
+    <!-- Laptop Lid (tilted open) -->
+    <polygon points="44,394 338,424 396,622 96,580" fill="url(#laptopLid)" stroke-width="11"/>
+    <!-- Screen bezel edge highlight -->
+    <line x1="56" y1="406" x2="328" y2="434" stroke="#f8fafc" stroke-width="4" opacity="0.8"/>
+
+    <!-- Badge on Laptop Lid (dark pill + glowing cyan delta triangle!) -->
+    <ellipse cx="218" cy="508" rx="64" ry="44" fill="#0f172a" stroke-width="8"/>
+    <polygon points="218,480 248,528 188,528" fill="none" stroke="#38bdf8" stroke-width="8" stroke-linejoin="round"/>
+    <circle cx="218" cy="512" r="7" fill="#fbbf24" stroke="none"/>
+  </g>
+
+  <!-- ==================== 3-TOWER DELTA 3D PRINTER (Right) ==================== -->
+  <g stroke="#0b0f19" stroke-linejoin="round" stroke-linecap="round">
+    <!-- Top Crown Frame (Hexagonal/Triangular Delta Top) -->
+    <polygon points="944,44 1126,96 1126,126 944,74 762,126 762,96" fill="url(#printerFrame)" stroke-width="10"/>
+    <polygon points="944,44 1126,96 944,148 762,96" fill="#334155" stroke-width="10"/>
+    <ellipse cx="944" cy="96" rx="74" ry="22" fill="#0f172a" stroke-width="6"/>
+
+    <!-- Back-Center Tower -->
+    <rect x="928" y="96" width="32" height="390" rx="8" fill="#1e293b" stroke-width="9"/>
+    <rect x="939" y="116" width="10" height="352" rx="4" fill="#0f172a" stroke="none"/>
+
+    <!-- Printer Base Chassis -->
+    <path d="M 734 510 L 944 452 L 1154 510 L 1154 592 L 944 648 L 734 592 Z"
+      fill="url(#printerFrame)" stroke-width="11"/>
+    <polygon points="734,510 944,452 1154,510 944,568" fill="#334155" stroke-width="10"/>
+
+    <!-- Front Base OLED Status Display (glowing green/cyan temps!) -->
+    <polygon points="784,548 920,584 920,626 784,590" fill="#020617" stroke-width="7"/>
+    <!-- Tiny LED temp bars & dots -->
+    <line x1="798" y1="568" x2="862" y2="585" stroke="#22c55e" stroke-width="7"/>
+    <line x1="798" y1="584" x2="896" y2="610" stroke="#38bdf8" stroke-width="6"/>
+    <circle cx="898" cy="592" r="5" fill="#fbbf24" stroke="none"/>
+    <!-- Base control knob -->
+    <ellipse cx="1044" cy="586" rx="28" ry="24" fill="#1e293b" stroke-width="7"/>
+    <ellipse cx="1044" cy="582" rx="16" ry="13" fill="#475569" stroke-width="4"/>
+
+    <!-- Circular Heated Build Plate -->
+    <ellipse cx="944" cy="498" rx="142" ry="48" fill="#0b1220" stroke-width="9"/>
+    <ellipse cx="944" cy="488" rx="142" ry="48" fill="#1e293b" stroke="#64748b" stroke-width="6"/>
+    <ellipse cx="944" cy="488" rx="108" ry="35" fill="none" stroke="#475569" stroke-width="3"/>
+
+    <!-- Glowing Printed Cyan Planetary Gear / Ring on the Build Plate -->
+    <ellipse cx="944" cy="482" rx="92" ry="30" fill="url(#printGlow)" stroke="none"/>
+    <ellipse cx="944" cy="480" rx="68" ry="22" fill="#0284c7" stroke="#0b0f19" stroke-width="6"/>
+    <ellipse cx="944" cy="472" rx="68" ry="22" fill="url(#cyanGrad)" stroke="#0b0f19" stroke-width="6"/>
+    <ellipse cx="944" cy="472" rx="34" ry="11" fill="#0f172a" stroke="#0b0f19" stroke-width="5"/>
+
+    <!-- Left & Right Front Towers -->
+    <rect x="752" y="100" width="38" height="422" rx="10" fill="url(#towerGrad)" stroke-width="10"/>
+    <rect x="765" y="122" width="12" height="378" rx="4" fill="#0f172a" stroke="none"/>
+    <rect x="1098" y="100" width="38" height="422" rx="10" fill="url(#towerGrad)" stroke-width="10"/>
+    <rect x="1111" y="122" width="12" height="378" rx="4" fill="#0f172a" stroke="none"/>
+
+    <!-- 3 Cyan Carriages on the Towers -->
+    <rect x="920" y="156" width="48" height="28" rx="8" fill="url(#cyanGrad)" stroke-width="7"/>
+    <rect x="742" y="196" width="58" height="36" rx="9" fill="url(#cyanGrad)" stroke-width="8"/>
+    <rect x="1088" y="196" width="58" height="36" rx="9" fill="url(#cyanGrad)" stroke-width="8"/>
+
+    <!-- 6 Parallel Delta Arms -->
+    <!-- Back pair -->
+    <line x1="932" y1="184" x2="922" y2="338" stroke="#0b0f19" stroke-width="14"/>
+    <line x1="932" y1="184" x2="922" y2="338" stroke="url(#armGrad)" stroke-width="7"/>
+    <line x1="956" y1="184" x2="966" y2="338" stroke="#0b0f19" stroke-width="14"/>
+    <line x1="956" y1="184" x2="966" y2="338" stroke="url(#armGrad)" stroke-width="7"/>
+    <!-- Left pair -->
+    <line x1="794" y1="212" x2="892" y2="352" stroke="#0b0f19" stroke-width="15"/>
+    <line x1="794" y1="212" x2="892" y2="352" stroke="url(#armGrad)" stroke-width="7"/>
+    <line x1="794" y1="228" x2="892" y2="368" stroke="#0b0f19" stroke-width="15"/>
+    <line x1="794" y1="228" x2="892" y2="368" stroke="url(#armGrad)" stroke-width="7"/>
+    <!-- Right pair -->
+    <line x1="1094" y1="212" x2="996" y2="352" stroke="#0b0f19" stroke-width="15"/>
+    <line x1="1094" y1="212" x2="996" y2="352" stroke="url(#armGrad)" stroke-width="7"/>
+    <line x1="1094" y1="228" x2="996" y2="368" stroke="#0b0f19" stroke-width="15"/>
+    <line x1="1094" y1="228" x2="996" y2="368" stroke="url(#armGrad)" stroke-width="7"/>
+
+    <!-- Delta Effector Platform -->
+    <polygon points="944,328 1010,362 944,394 878,362" fill="#1e293b" stroke="#0b0f19" stroke-width="9"/>
+    <polygon points="944,336 998,362 944,386 890,362" fill="url(#cyanGrad)" stroke="#0b0f19" stroke-width="5"/>
+
+    <!-- Hotend & Brass Nozzle -->
+    <rect x="926" y="388" width="36" height="30" rx="6" fill="#cbd5e1" stroke-width="7"/>
+    <polygon points="930,418 958,418 949,454 939,454" fill="url(#brassGrad)" stroke-width="6"/>
+
+    <!-- Hot Nozzle Glow & Extrusion Filament Bead -->
+    <circle cx="944" cy="462" r="34" fill="url(#nozzleGlow)" stroke="none"/>
+    <circle cx="944" cy="458" r="7" fill="#fef08a" stroke="none"/>
+    <line x1="944" y1="460" x2="944" y2="474" stroke="#38bdf8" stroke-width="6"/>
+  </g>
+</svg>
