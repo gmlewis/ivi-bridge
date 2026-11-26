@@ -100,3 +100,66 @@ func TestOctoPrintUploadPipeline(t *testing.T) {
 		t.Fatalf("expected duplicate to be renamed to benchy_180506.gcode, got %q", receivedName)
 	}
 }
+
+func TestUploadAndPrintUSBSerial(t *testing.T) {
+	fakePrinter := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/status":
+			_, _ = w.Write([]byte(`{"status":"IDLE"}`))
+		case "/api/v1/upload":
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte("Upload successfully"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer fakePrinter.Close()
+
+	ivi := NewIVIClient(fakePrinter.URL, false, false, "")
+	bridge := NewBridgeServer(ivi, "", true, true, "")
+	bridge.Serial = NewSerialController("auto", 115200, true) // dry-run USB serial
+	defer bridge.Serial.Close()
+	// Give dry-run serial loop a moment to mark Connected=true.
+	deadline := time.Now().Add(2 * time.Second)
+	for !bridge.Serial.Snapshot().Connected && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	ts := httptest.NewServer(bridge.Handler())
+	defer ts.Close()
+
+	sampleGCode := "; HEADER_BLOCK_START\nM82 ;absolute extrusion mode\n;Header Start\n;material_type: PLA\n;nozzle_temperature(°C): 220\n;build_plate_temperature(°C): 60\n;Header End\n;Start GCode begin\nG28\nG1 E7.0 F300\n;Start GCode end\nG1 X10 Y20 Z0.2\n"
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, _ := mw.CreateFormFile("file", "gear.gcode")
+	_, _ = fw.Write([]byte(sampleGCode))
+	_ = mw.WriteField("print", "true")
+	_ = mw.Close()
+
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/files/local", &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /api/files/local (print=true): %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200 for Upload & Print with USB serial, got %d: %s", resp.StatusCode, string(b))
+	}
+
+	// Wait for dry-run print to complete and verify PrintJobSnapshot recorded completion.
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		pj := bridge.Serial.PrintJobSnapshot()
+		if pj != nil && !pj.Active && pj.State == "Completed" {
+			if pj.FileName != "gear.gcode" || pj.TotalLines < 3 || pj.SentLines != pj.TotalLines {
+				t.Fatalf("unexpected completed print job status: %+v", pj)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for dry-run USB serial print to complete; status=%+v", bridge.Serial.PrintJobSnapshot())
+}

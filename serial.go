@@ -47,8 +47,9 @@ type SerialState struct {
 	Z             float64       `json:"z"`
 	E             float64       `json:"e"`
 	LastUpdate    time.Time     `json:"last_update,omitempty"`
-	LastError     string        `json:"last_error,omitempty"`
-	Console       []ConsoleLine `json:"console"`
+	LastError     string          `json:"last_error,omitempty"`
+	PrintJob      *PrintJobStatus `json:"print_job,omitempty"`
+	Console       []ConsoleLine   `json:"console"`
 }
 
 type SerialController struct {
@@ -61,12 +62,17 @@ type SerialController struct {
 
 	cmdMu sync.Mutex // serializes G-code commands waiting for "ok"
 
-	mu       sync.Mutex
-	fd       int
-	state    SerialState
-	homeZ    float64
-	hasHomeZ bool
-	waiterCh chan string // receives lines while a command is waiting for "ok"
+	mu          sync.Mutex
+	fd          int
+	state       SerialState
+	homeZ       float64
+	hasHomeZ    bool
+	waiterCh    chan string // receives lines while a command is waiting for "ok"
+	printActive bool
+	printPaused bool
+	printCancel context.CancelFunc
+	printWakeCh chan struct{}
+	printDoneCh chan struct{}
 }
 
 func NewSerialController(portSpec string, baud int, dryRun bool) *SerialController {
@@ -96,6 +102,12 @@ func NewSerialController(portSpec string, baud int, dryRun bool) *SerialControll
 
 func (sc *SerialController) Close() {
 	sc.once.Do(func() {
+		sc.mu.Lock()
+		cancel := sc.printCancel
+		sc.mu.Unlock()
+		if cancel != nil {
+			cancel()
+		}
 		close(sc.stopCh)
 		sc.closePort()
 	})
@@ -105,6 +117,17 @@ func (sc *SerialController) Snapshot() SerialState {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	cp := sc.state
+	if sc.state.PrintJob != nil {
+		pj := *sc.state.PrintJob
+		if pj.Active && !pj.StartedAt.IsZero() {
+			pj.ElapsedSec = int(time.Since(pj.StartedAt).Seconds())
+			if pj.SentLines > 0 && pj.TotalLines > pj.SentLines {
+				rate := float64(pj.ElapsedSec) / float64(pj.SentLines)
+				pj.EstimatedLeftSec = int(rate * float64(pj.TotalLines-pj.SentLines))
+			}
+		}
+		cp.PrintJob = &pj
+	}
 	cp.Console = make([]ConsoleLine, len(sc.state.Console))
 	copy(cp.Console, sc.state.Console)
 	return cp
@@ -318,7 +341,8 @@ func (sc *SerialController) handleLine(line string) {
 	// Avoid flooding the console with periodic M105/M114 responses unless a user command is active.
 	waiter := sc.waiterCh
 	isQuietPoll := strings.HasPrefix(line, "ok T:") || strings.HasPrefix(line, "T:")
-	if !isQuietPoll {
+	isQuietPrintOk := sc.printActive && (line == "ok" || strings.HasPrefix(line, "ok "))
+	if !isQuietPoll && !isQuietPrintOk {
 		sc.appendConsoleLocked("rx", line)
 	}
 	sc.mu.Unlock()
@@ -422,6 +446,16 @@ func (sc *SerialController) sendInternal(ctx context.Context, gcode string, time
 		return []string{"ok (dry-run)"}, nil
 	}
 
+	isEStop := strings.HasPrefix(strings.ToUpper(line), "M112")
+	if isEStop {
+		sc.mu.Lock()
+		cancel := sc.printCancel
+		sc.mu.Unlock()
+		if cancel != nil {
+			cancel()
+		}
+	}
+
 	sc.cmdMu.Lock()
 	defer sc.cmdMu.Unlock()
 
@@ -432,9 +466,13 @@ func (sc *SerialController) sendInternal(ctx context.Context, gcode string, time
 		sc.mu.Unlock()
 		return nil, errors.New("serial port not connected")
 	}
-	// Protect active touchscreen prints: never inject G-code over USB serial
-	// while the printer reports a non-IDLE Working Status (e.g. WORKING_SCREEN).
-	if ws != "" && ws != "IDLE" {
+	// Protect active USB-serial prints and touchscreen prints: never inject
+	// manual G-code over USB serial while printing (except M112 E-STOP).
+	if !isEStop && sc.printActive {
+		sc.mu.Unlock()
+		return nil, errors.New("serial commands blocked while a USB serial print is active (use Pause/Cancel or E-STOP)")
+	}
+	if !isEStop && ws != "" && ws != "IDLE" {
 		sc.mu.Unlock()
 		return nil, fmt.Errorf("serial commands blocked while printer is busy (Working Status: %s)", ws)
 	}

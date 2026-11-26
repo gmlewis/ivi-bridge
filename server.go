@@ -235,26 +235,38 @@ func (s *BridgeServer) handleFilesLocal(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	rec, wantPrint, err := s.processUploadRequest(r)
+	rec, payload, wantPrint, err := s.processUploadRequest(r)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 
 	if wantPrint {
-		code, detail, cmdErr := s.IVI.Command(r.Context(), "start_print", nil)
-		if cmdErr != nil {
-			if code == 0 {
-				code = http.StatusConflict
+		if s.Serial != nil && s.Serial.Snapshot().Enabled {
+			if pErr := s.Serial.StartPrint(rec.SentName, payload); pErr != nil {
+				writeJSON(w, http.StatusConflict, map[string]any{
+					"error":  "uploaded to printer, but USB serial print NOT started",
+					"detail": pErr.Error(),
+					"file":   rec.SentName,
+					"hint":   "The transformed file is on the printer; ensure USB serial is connected and the printer is idle, or start it from the touchscreen.",
+				})
+				return
 			}
-			writeJSON(w, code, map[string]any{
-				"error":  "uploaded, but print NOT started",
-				"detail": cmdErr.Error(),
-				"raw":    detail,
-				"file":   rec.SentName,
-				"hint":   "The transformed file is on the printer; start it from the printer's Files screen.",
-			})
-			return
+		} else {
+			code, detail, cmdErr := s.IVI.Command(r.Context(), "start_print", nil)
+			if cmdErr != nil {
+				if code == 0 {
+					code = http.StatusConflict
+				}
+				writeJSON(w, code, map[string]any{
+					"error":  "uploaded, but print NOT started",
+					"detail": cmdErr.Error(),
+					"raw":    detail,
+					"file":   rec.SentName,
+					"hint":   "The transformed file is on the printer; connect USB serial (--serial auto) for Upload and Print, or start it from the printer's Files screen.",
+				})
+				return
+			}
 		}
 	}
 
@@ -274,20 +286,20 @@ func (s *BridgeServer) handleFilesLocal(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-func (s *BridgeServer) processUploadRequest(r *http.Request) (UploadRecord, bool, error) {
+func (s *BridgeServer) processUploadRequest(r *http.Request) (UploadRecord, []byte, bool, error) {
 	r.Body = http.MaxBytesReader(nil, r.Body, maxUploadBytes)
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
-		return UploadRecord{}, false, fmt.Errorf("parse multipart form: %w", err)
+		return UploadRecord{}, nil, false, fmt.Errorf("parse multipart form: %w", err)
 	}
 	file, header, err := r.FormFile("file")
 	if err != nil {
-		return UploadRecord{}, false, fmt.Errorf("missing 'file' field: %w", err)
+		return UploadRecord{}, nil, false, fmt.Errorf("missing 'file' field: %w", err)
 	}
 	defer file.Close()
 
 	raw, err := io.ReadAll(file)
 	if err != nil {
-		return UploadRecord{}, false, fmt.Errorf("read upload: %w", err)
+		return UploadRecord{}, nil, false, fmt.Errorf("read upload: %w", err)
 	}
 	wantPrint := strings.EqualFold(strings.TrimSpace(r.FormValue("print")), "true")
 
@@ -297,7 +309,7 @@ func (s *BridgeServer) processUploadRequest(r *http.Request) (UploadRecord, bool
 	if s.AutoTransform {
 		transformed, m, tErr := TransformGCode(raw, now)
 		if tErr != nil {
-			return UploadRecord{}, wantPrint, fmt.Errorf("transform gcode: %w", tErr)
+			return UploadRecord{}, nil, wantPrint, fmt.Errorf("transform gcode: %w", tErr)
 		}
 		payload = transformed
 		meta = m
@@ -311,7 +323,7 @@ func (s *BridgeServer) processUploadRequest(r *http.Request) (UploadRecord, bool
 
 	respText, err := s.IVI.Upload(r.Context(), sentName, payload)
 	if err != nil {
-		return UploadRecord{}, wantPrint, err
+		return UploadRecord{}, nil, wantPrint, err
 	}
 
 	rec := UploadRecord{
@@ -329,7 +341,7 @@ func (s *BridgeServer) processUploadRequest(r *http.Request) (UploadRecord, bool
 	for _, warn := range meta.Warnings {
 		log.Printf("[bridge] WARNING (%s): %s", sentName, warn)
 	}
-	return rec, wantPrint, nil
+	return rec, payload, wantPrint, nil
 }
 
 func (s *BridgeServer) handleJob(w http.ResponseWriter, r *http.Request) {
@@ -339,13 +351,31 @@ func (s *BridgeServer) handleJob(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodGet {
 		st := s.IVI.Status(r.Context())
+		stateText := st.OctoState
 		lastFile := ""
 		hist := s.getHistory()
 		if len(hist) > 0 {
 			lastFile = hist[0].SentName
 		}
+		var completion any
+		var printTime any
+		var printTimeLeft any
+		if pj := s.Serial.PrintJobSnapshot(); pj != nil && pj.Active {
+			stateText = pj.State
+			lastFile = pj.FileName
+			completion = pj.Completion
+			printTime = pj.ElapsedSec
+			if pj.EstimatedLeftSec > 0 {
+				printTimeLeft = pj.EstimatedLeftSec
+			}
+		} else if s.Serial != nil {
+			ss := s.Serial.Snapshot()
+			if ss.Connected && ss.WorkingStatus != "" && ss.WorkingStatus != "IDLE" {
+				stateText = "Printing"
+			}
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"state": st.OctoState,
+			"state": stateText,
 			"job": map[string]any{
 				"file": map[string]any{
 					"name":   lastFile,
@@ -353,9 +383,9 @@ func (s *BridgeServer) handleJob(w http.ResponseWriter, r *http.Request) {
 				},
 			},
 			"progress": map[string]any{
-				"completion":    nil,
-				"printTime":     nil,
-				"printTimeLeft": nil,
+				"completion":    completion,
+				"printTime":     printTime,
+				"printTimeLeft": printTimeLeft,
 			},
 		})
 		return
@@ -363,9 +393,42 @@ func (s *BridgeServer) handleJob(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		var body struct {
 			Command string `json:"command"`
+			Action  string `json:"action"`
 		}
 		if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad JSON"})
+			return
+		}
+		// Route active USB-serial print controls directly to SerialController.
+		if s.Serial != nil && s.Serial.IsPrinting() {
+			var err error
+			switch body.Command {
+			case "cancel":
+				err = s.Serial.CancelPrint()
+			case "pause":
+				switch strings.ToLower(strings.TrimSpace(body.Action)) {
+				case "resume":
+					err = s.Serial.ResumePrint()
+				case "toggle":
+					if pj := s.Serial.PrintJobSnapshot(); pj != nil && pj.State == "Paused" {
+						err = s.Serial.ResumePrint()
+					} else {
+						err = s.Serial.PausePrint()
+					}
+				default:
+					err = s.Serial.PausePrint()
+				}
+			case "resume":
+				err = s.Serial.ResumePrint()
+			default:
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported command: " + body.Command})
+				return
+			}
+			if err != nil {
+				writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		mapping := map[string]string{
@@ -399,6 +462,7 @@ func (s *BridgeServer) handlePrinter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	st := s.IVI.Status(r.Context())
+	stateText := st.OctoState
 	nozzleActual, nozzleTarget := 0.0, 0.0
 	bedActual, bedTarget := 0.0, 0.0
 	if s.Serial != nil {
@@ -406,16 +470,21 @@ func (s *BridgeServer) handlePrinter(w http.ResponseWriter, r *http.Request) {
 		if ss.Connected {
 			nozzleActual, nozzleTarget = ss.NozzleActual, ss.NozzleTarget
 			bedActual, bedTarget = ss.BedActual, ss.BedTarget
+			if ss.PrintJob != nil && ss.PrintJob.Active {
+				stateText = ss.PrintJob.State
+			} else if ss.WorkingStatus != "" && ss.WorkingStatus != "IDLE" {
+				stateText = "Printing"
+			}
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"state": map[string]any{
-			"text": st.OctoState,
+			"text": stateText,
 			"flags": map[string]bool{
 				"operational":   st.Reachable,
-				"printing":      st.OctoState == "Printing",
-				"paused":        st.OctoState == "Paused",
-				"ready":         st.OctoState == "Operational",
+				"printing":      stateText == "Printing",
+				"paused":        stateText == "Paused",
+				"ready":         stateText == "Operational",
 				"error":         !st.Reachable,
 				"closedOrError": !st.Reachable,
 			},
@@ -591,7 +660,7 @@ func (s *BridgeServer) handleIVIUpload(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	rec, _, err := s.processUploadRequest(r)
+	rec, _, _, err := s.processUploadRequest(r)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
