@@ -13,9 +13,16 @@ clearance) and structural housings.
 
 ## Installation
 
-Copy the three subdirectories into your OrcaSlicer user preset folder, then restart OrcaSlicer:
+Run the installer script (works on both macOS and Linux). It copies the user
+profiles, syncs `machine_start_gcode` / `machine_end_gcode` into both your
+non-cached user profile (`IVI 3D 0.3 nozzle - Copy.json`) and the `system/IVI3D`
+profile, bumps the `IVI3D.json` bundle version, and deletes any stale
+`system/IVI3D.opc` cache so OrcaSlicer never serves old G-code:
 
-- **macOS:** `~/Library/Application Support/OrcaSlicer/user/default/`
-- **Linux:** `~/.config/OrcaSlicer/user/default/`
+```sh
+./install.sh
+```
 
-Then open **Printer Settings → Connection** and set **Hostname / IP** to your `ivi-bridge` address (e.g. `127.0.0.1:5000` locally, or `<your-bridge-host>:5000` over LAN/Tailscale).
+Then restart OrcaSlicer (if open), open **Printer Settings → Connection**, and
+verify **Hostname / IP** points to your `ivi-bridge` address (e.g.
+`127.0.0.1:5000` locally, or `<your-bridge-host>:5000` over LAN/Tailscale).

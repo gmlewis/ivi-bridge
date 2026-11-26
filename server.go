@@ -326,6 +326,9 @@ func (s *BridgeServer) processUploadRequest(r *http.Request) (UploadRecord, bool
 	s.recordUpload(rec)
 	log.Printf("[bridge] uploaded %q as %q (transformed=%v, lines=%d/%d, nozzle=%sC, bed=%sC)",
 		origName, sentName, meta.Transformed, meta.TotalLines, meta.ValidLines, meta.NozzleTemp, meta.BedTemp)
+	for _, warn := range meta.Warnings {
+		log.Printf("[bridge] WARNING (%s): %s", sentName, warn)
+	}
 	return rec, wantPrint, nil
 }
 

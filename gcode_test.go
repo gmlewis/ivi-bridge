@@ -97,3 +97,35 @@ func TestTransformGCode(t *testing.T) {
 		t.Fatalf("expected idempotent output on second transform")
 	}
 }
+
+func TestCheckPrimeBalance(t *testing.T) {
+	balanced := []string{
+		";Start GCode begin",
+		"G1 Z0.8 F500.0",
+		"G1 E7.0 F300 ;re-prime 6.5mm end-of-print retraction + 0.5mm pressure",
+		"G92 E0",
+		"G1 X8.66 Y-98.94 E8.0 F500.0 ; intro line",
+		";Start GCode end",
+		";End GCode begin",
+		"G91",
+		"G1 E-6.5 F2400",
+		";End of Gcode",
+	}
+	if w := checkPrimeBalance(balanced); len(w) != 0 {
+		t.Fatalf("expected no warnings for balanced start/end prime, got %v", w)
+	}
+
+	missingPrime := []string{
+		";Start GCode begin",
+		"G1 Z0.8 F500.0",
+		"G1 X8.66 Y-98.94 E8.0 F500.0 ; intro line",
+		";Start GCode end",
+		";End GCode begin",
+		"G91",
+		"G1 E-6.5 F2400",
+		";End of Gcode",
+	}
+	if w := checkPrimeBalance(missingPrime); len(w) != 1 {
+		t.Fatalf("expected 1 warning when start re-prime is missing, got %v", w)
+	}
+}
