@@ -49,3 +49,8 @@ printer's touchscreen **Files** list.
 - **Duplicate filename quirk:** Re-uploading a filename that already exists on the printer
   can silently keep the stale file; `ivi-bridge` enables `--unique-names` by default to
   append `_HHMMSS` automatically.
+- **Interior dot quirk (`HTTP 412 "File type error"`):** The IVI's `kore` server checks
+  the `.gcode` extension from the **first** `.` in the filename (`strchr` instead of
+  `strrchr`), so filenames with extra dots (like `part-tol0.090.gcode`) fail with
+  `HTTP 412 "File type error"`. `ivi-bridge` automatically replaces interior dots in
+  the filename stem with `_` before uploading.

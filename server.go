@@ -91,13 +91,24 @@ func (s *BridgeServer) saveStateLocked() {
 	_ = os.WriteFile(s.StateFile, data, 0o644)
 }
 
-// chooseFilename returns a unique filename if UniqueNames is enabled and the
-// base filename was already uploaded to the printer (mitigating the IVI's
-// silent duplicate-filename quirk).
+// chooseFilename sanitizes the filename for the IVI's kore HTTP server and
+// appends a timestamp suffix if UniqueNames is enabled and the filename was
+// already uploaded (mitigating the IVI's silent duplicate-filename quirk).
+//
+// The IVI firmware checks the file extension using the FIRST '.' in the
+// filename (strchr instead of strrchr), so any extra '.' in the stem (such as
+// "tol0.090") causes HTTP 412 "File type error". We replace interior dots in
+// the stem with '_' so the only '.' precedes ".gcode".
 func (s *BridgeServer) chooseFilename(orig string, now time.Time) (string, bool) {
 	base := filepath.Base(strings.TrimSpace(orig))
 	if base == "" || base == "." || base == "/" {
 		base = "upload.gcode"
+	}
+	ext := filepath.Ext(base)
+	stem := strings.TrimSuffix(base, ext)
+	if strings.Contains(stem, ".") {
+		stem = strings.ReplaceAll(stem, ".", "_")
+		base = stem + ext
 	}
 	if !s.UniqueNames {
 		return base, false
@@ -107,8 +118,6 @@ func (s *BridgeServer) chooseFilename(orig string, now time.Time) (string, bool)
 	if !s.seenNames[strings.ToLower(base)] {
 		return base, false
 	}
-	ext := filepath.Ext(base)
-	stem := strings.TrimSuffix(base, ext)
 	stamp := now.Format("150405")
 	candidate := fmt.Sprintf("%s_%s%s", stem, stamp, ext)
 	for i := 2; s.seenNames[strings.ToLower(candidate)]; i++ {
