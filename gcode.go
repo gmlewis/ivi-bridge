@@ -85,17 +85,20 @@ type GCodeMeta struct {
 	Warnings       []string `json:"warnings,omitempty"`
 }
 
-// checkPrimeBalance inspects the start/end G-code sections for a large
-// end-of-print retraction (>= 4.0 mm, e.g. G1 E-6.5) without a compensating
-// stationary start-of-print re-prime (G1 E+<mm> with no X/Y motion) before the
-// intro line. It is strictly non-destructive (advisory warning only) so custom
-// calibration prints are never modified or blocked.
-func checkPrimeBalance(lines []string) []string {
+// ensureStartReprime checks whether the file has a large end-of-print
+// retraction (>= 4.0 mm, e.g. G1 E-6.5) without a compensating stationary
+// start-of-print re-prime before the intro line. If so, it automatically
+// injects `G1 E<retract+0.5> F300` + `G92 E0` right before the first intro
+// line inside `;Start GCode begin`..`;Start GCode end` so even stale `.3mf`
+// projects or un-restarted OrcaSlicer sessions never print a dry first layer.
+// Returns the (possibly healed) body lines and any advisory warnings/notices.
+func ensureStartReprime(lines []string) ([]string, []string) {
 	inStart, inEnd := false, false
 	hasStartPrime := false
 	maxEndRetract := 0.0
+	introIdx := -1
 
-	for _, raw := range lines {
+	for idx, raw := range lines {
 		s := strings.TrimSpace(raw)
 		lower := strings.ToLower(s)
 		if strings.HasPrefix(lower, ";start gcode begin") {
@@ -114,12 +117,15 @@ func checkPrimeBalance(lines []string) []string {
 			inEnd = false
 			continue
 		}
+		if inStart && introIdx < 0 && strings.Contains(lower, "intro line") {
+			introIdx = idx
+		}
 		if s == "" || strings.HasPrefix(s, ";") {
 			continue
 		}
 		code := s
-		if idx := strings.IndexByte(code, ';'); idx >= 0 {
-			code = strings.TrimSpace(code[:idx])
+		if c := strings.IndexByte(code, ';'); c >= 0 {
+			code = strings.TrimSpace(code[:c])
 		}
 		if !strings.HasPrefix(code, "G1 ") && !strings.HasPrefix(code, "G0 ") {
 			continue
@@ -142,12 +148,26 @@ func checkPrimeBalance(lines []string) []string {
 		}
 	}
 
-	if maxEndRetract >= 4.0 && !hasStartPrime {
-		return []string{
-			fmt.Sprintf("end-of-print retracts %.1fmm but start G-code has no stationary re-prime before intro line (check OrcaSlicer preset or stale .opc cache)", maxEndRetract),
+	if maxEndRetract < 4.0 || hasStartPrime {
+		return lines, nil
+	}
+	if introIdx >= 0 {
+		primeMM := maxEndRetract + 0.5
+		inject := []string{
+			fmt.Sprintf("G1 E%.1f F120 ;ivi-bridge auto re-prime (compensates %.1fmm end retraction at 2mm/s)", primeMM, maxEndRetract),
+			"G92 E0",
+		}
+		healed := make([]string, 0, len(lines)+len(inject))
+		healed = append(healed, lines[:introIdx]...)
+		healed = append(healed, inject...)
+		healed = append(healed, lines[introIdx:]...)
+		return healed, []string{
+			fmt.Sprintf("AUTO-HEALED: injected G1 E%.1f F120 re-prime before intro line (start G-code was missing re-prime for %.1fmm end retraction; restart OrcaSlicer to pick up updated preset)", primeMM, maxEndRetract),
 		}
 	}
-	return nil
+	return lines, []string{
+		fmt.Sprintf("end-of-print retracts %.1fmm but start G-code has no stationary re-prime before intro line (check OrcaSlicer preset or stale .opc cache)", maxEndRetract),
+	}
 }
 
 func firstTemp(lines []string, codes ...string) string {
@@ -345,6 +365,9 @@ func TransformGCode(raw []byte, now time.Time) ([]byte, GCodeMeta, error) {
 		body = append(body, ln)
 	}
 
+	var primeWarnings []string
+	body, primeWarnings = ensureStartReprime(body)
+
 	oldHdr := strings.Join(lines[hs:he+1], "\n")
 	nozzle := ""
 	bed := ""
@@ -456,7 +479,7 @@ func TransformGCode(raw []byte, now time.Time) ([]byte, GCodeMeta, error) {
 		MaxY:        maxY,
 		MinZ:        minZ,
 		MaxZ:        maxZ,
-		Warnings:    checkPrimeBalance(body),
+		Warnings:    primeWarnings,
 	}
 	return []byte(strings.Join(out, "\n")), meta, nil
 }

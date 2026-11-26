@@ -9,6 +9,7 @@
 		loadConfig,
 		normalizeUrl,
 		saveConfig,
+		sendJobCommand,
 		serialBabystep,
 		serialClearConsole,
 		serialEStop,
@@ -24,7 +25,7 @@
 	} from './api.ts';
 
 	type TabId = 'control' | 'filament' | 'console' | 'upload';
-	type ConfirmAction = 'estop' | 'home' | 'motors' | null;
+	type ConfirmAction = 'estop' | 'home' | 'motors' | 'cancel' | null;
 
 	const COLD_EXTRUSION_MIN_C = 175;
 
@@ -67,10 +68,22 @@
 	const serial = $derived<SerialState | null>(stateData?.serial ?? null);
 	const serialReady = $derived(Boolean(serial?.enabled && serial?.connected));
 	const wifiOnline = $derived(Boolean(stateData?.status?.reachable));
+	const printJob = $derived(serial?.print_job ?? null);
+	const usbPrinting = $derived(Boolean(printJob?.active));
 	const isPrinting = $derived(
-		Boolean(serialReady && serial?.working_status && serial.working_status !== 'IDLE')
+		Boolean(usbPrinting || (serialReady && serial?.working_status && serial.working_status !== 'IDLE'))
 	);
 	const controlsEnabled = $derived(serialReady && !busy && !isPrinting);
+
+	async function doJobAction(cmd: 'pause' | 'resume' | 'cancel') {
+		try {
+			await sendJobCommand(bridgeUrl, cmd);
+			setNotice('ok', `Print ${cmd} sent.`);
+			await refresh(true);
+		} catch (err) {
+			setNotice('err', `Print ${cmd} failed: ${err instanceof Error ? err.message : String(err)}`);
+		}
+	}
 	const hotendHot = $derived(
 		Boolean(serialReady && serial && serial.nozzle_actual >= COLD_EXTRUSION_MIN_C)
 	);
@@ -430,15 +443,29 @@
 				</div>
 				<div class={isPrinting ? 'badge badge-print' : serialReady ? 'badge badge-ok' : 'badge badge-warn'}>
 					<text class="badge-text">
-						{serialReady ? `USB: ${serial?.working_status || 'Connected'}` : 'USB: Disconnected'}
+						{usbPrinting && printJob
+							? `USB: ${printJob.state} ${printJob.completion.toFixed(1)}%`
+							: serialReady
+								? `USB: ${serial?.working_status || 'Connected'}`
+								: 'USB: Disconnected'}
 					</text>
 				</div>
+				{#if usbPrinting}
+					<button
+						class={armedAction === 'cancel' ? 'btn-estop-armed' : 'btn-secondary'}
+						onclick={() => requireTwoTap('cancel', 'Confirm Cancel Print?', () => doJobAction('cancel'))}
+					>
+						<text class="btn-text">
+							{armedAction === 'cancel' ? 'CONFIRM CANCEL!' : 'Cancel Print'}
+						</text>
+					</button>
+				{/if}
 				<button
 					class={armedAction === 'estop' ? 'btn-estop-armed' : 'btn-estop'}
-					onclick={() => requireTwoTap('estop', 'Confirm E-STOP?', doEStop)}
+					onclick={() => requireTwoTap('estop', 'Confirm E-STOP (Kill)?', doEStop)}
 				>
 					<text class="btn-estop-text">
-						{armedAction === 'estop' ? 'CONFIRM E-STOP!' : 'E-STOP (M112)'}
+						{armedAction === 'estop' ? 'CONFIRM KILL!' : 'E-STOP (Kill)'}
 					</text>
 				</button>
 			</div>
@@ -467,8 +494,31 @@
 	{#if isPrinting}
 		<div class="lock-banner">
 			<text class="lock-banner-text">
-				PRINT IN PROGRESS ({serial?.working_status}) — Monitor-only mode: motion, heater, filament, and console controls are locked to protect your print.
+				{usbPrinting && printJob
+					? `USB PRINT ${printJob.state.toUpperCase()} (${printJob.completion.toFixed(1)}% · ${printJob.sent_lines}/${printJob.total_lines} lines): ${printJob.file_name}`
+					: `TOUCHSCREEN PRINT IN PROGRESS (${serial?.working_status}) — Monitor-only mode: motion, heater, filament, and console controls are locked.`}
 			</text>
+			{#if usbPrinting && printJob}
+				<div class="conn-row">
+					{#if printJob.state === 'Paused'}
+						<button class="btn-secondary" onclick={() => doJobAction('resume')}>
+							<text class="btn-text">Resume Print</text>
+						</button>
+					{:else}
+						<button class="btn-secondary" onclick={() => doJobAction('pause')}>
+							<text class="btn-text">Pause Print</text>
+						</button>
+					{/if}
+					<button
+						class={armedAction === 'cancel' ? 'btn-estop-armed' : 'btn-estop'}
+						onclick={() => requireTwoTap('cancel', 'Confirm Cancel Print?', () => doJobAction('cancel'))}
+					>
+						<text class="btn-estop-text">
+							{armedAction === 'cancel' ? 'CONFIRM CANCEL!' : 'Cancel Print (Stop & Home)'}
+						</text>
+					</button>
+				</div>
+			{/if}
 		</div>
 	{/if}
 

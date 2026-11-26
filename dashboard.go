@@ -112,7 +112,8 @@ const dashboardHTML = `<!doctype html>
       <span class="pill" id="wifiPill">Wi-Fi: ...</span>
       <span class="pill" id="usbPill">USB: ...</span>
       <span class="pill" id="statePill">State: ...</span>
-      <button class="btn danger" id="estopBtn" onclick="confirmAction(this, 'M112 E-STOP?', sendEStop)">E-STOP (M112)</button>
+      <button class="btn warn" id="topCancelBtn" style="display:none;" onclick="confirmAction(this, 'Stop & Home?', () => jobCmd('cancel'))" title="Cleanly stops print, turns off heaters, lifts Z, and homes — no power-cycle needed">Cancel Print</button>
+      <button class="btn danger" id="estopBtn" onclick="confirmAction(this, 'KILL MCU?', sendEStop)" title="M112 emergency halt — permanently freezes Marlin until hard power-cycle! Use Cancel Print for normal aborts.">E-STOP (Kill)</button>
     </div>
   </div>
 
@@ -480,6 +481,7 @@ async function refresh() {
       document.getElementById('jobEta').textContent = pj.active ? fmtDur(pj.estimated_left_sec || 0) : '—';
       document.getElementById('jobErr').textContent = pj.last_error || '';
       ja.style.display = pj.active ? 'flex' : 'none';
+      document.getElementById('topCancelBtn').style.display = pj.active ? 'inline-block' : 'none';
       document.getElementById('pauseBtn').style.display = pj.state === 'Paused' ? 'none' : 'inline-block';
       document.getElementById('resumeBtn').style.display = pj.state === 'Paused' ? 'inline-block' : 'none';
     } else {
@@ -493,6 +495,7 @@ async function refresh() {
       document.getElementById('jobEta').textContent = '—';
       document.getElementById('jobErr').textContent = '';
       ja.style.display = 'none';
+      document.getElementById('topCancelBtn').style.display = 'none';
     }
 
     // Temperatures & Coords
@@ -512,8 +515,16 @@ async function refresh() {
       document.getElementById('posZ').textContent = (ser.z || 0).toFixed(2);
       document.getElementById('posE').textContent = (ser.e || 0).toFixed(2);
       const hp = document.getElementById('homedPill');
-      hp.className = 'pill ' + (ser.homed ? 'ok' : 'warn');
-      hp.textContent = ser.homed ? 'Homed: YES' : 'Homed: NO';
+      if (ser.at_home) {
+        hp.className = 'pill ok';
+        hp.textContent = 'At Home';
+      } else if (ser.homed) {
+        hp.className = 'pill info';
+        hp.textContent = 'XYZ Referenced';
+      } else {
+        hp.className = 'pill warn';
+        hp.textContent = 'Not Homed';
+      }
 
       tempHistory.push({ na: lastNozzleActual, nt: ser.nozzle_target || 0, ba: ser.bed_actual || 0, bt: ser.bed_target || 0 });
       if (tempHistory.length > MAX_PTS) tempHistory.shift();

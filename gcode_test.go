@@ -98,7 +98,7 @@ func TestTransformGCode(t *testing.T) {
 	}
 }
 
-func TestCheckPrimeBalance(t *testing.T) {
+func TestEnsureStartReprime(t *testing.T) {
 	balanced := []string{
 		";Start GCode begin",
 		"G1 Z0.8 F500.0",
@@ -111,8 +111,9 @@ func TestCheckPrimeBalance(t *testing.T) {
 		"G1 E-6.5 F2400",
 		";End of Gcode",
 	}
-	if w := checkPrimeBalance(balanced); len(w) != 0 {
-		t.Fatalf("expected no warnings for balanced start/end prime, got %v", w)
+	got, w := ensureStartReprime(balanced)
+	if len(w) != 0 || len(got) != len(balanced) {
+		t.Fatalf("expected balanced start/end prime untouched, got len=%d warnings=%v", len(got), w)
 	}
 
 	missingPrime := []string{
@@ -125,7 +126,11 @@ func TestCheckPrimeBalance(t *testing.T) {
 		"G1 E-6.5 F2400",
 		";End of Gcode",
 	}
-	if w := checkPrimeBalance(missingPrime); len(w) != 1 {
-		t.Fatalf("expected 1 warning when start re-prime is missing, got %v", w)
+	healed, w := ensureStartReprime(missingPrime)
+	if len(w) != 1 || !strings.Contains(w[0], "AUTO-HEALED") {
+		t.Fatalf("expected AUTO-HEALED notice, got %v", w)
+	}
+	if len(healed) != len(missingPrime)+2 || !strings.HasPrefix(healed[2], "G1 E7.0 F120") || healed[3] != "G92 E0" {
+		t.Fatalf("expected G1 E7.0 F120 + G92 E0 injected before intro line, got %v", healed)
 	}
 }

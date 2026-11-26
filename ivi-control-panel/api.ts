@@ -40,6 +40,19 @@ export interface ConsoleLine {
 	text: string;
 }
 
+export interface PrintJobStatus {
+	active: boolean;
+	state: string;
+	file_name: string;
+	total_lines: number;
+	sent_lines: number;
+	completion: number;
+	started_at?: string;
+	elapsed_sec: number;
+	estimated_left_sec: number;
+	last_error?: string;
+}
+
 export interface SerialState {
 	enabled: boolean;
 	connected: boolean;
@@ -63,6 +76,7 @@ export interface SerialState {
 	e: number;
 	last_update?: string;
 	last_error?: string;
+	print_job?: PrintJobStatus | null;
 	console: ConsoleLine[];
 }
 
@@ -223,6 +237,23 @@ export function serialSendGCode(baseUrl: string, gcode: string): Promise<SerialA
 
 export function serialClearConsole(baseUrl: string): Promise<SerialActionResp> {
 	return postJson(baseUrl, '/api/ivi/serial/console/clear', {});
+}
+
+export async function sendJobCommand(
+	baseUrl: string,
+	command: 'pause' | 'resume' | 'cancel'
+): Promise<void> {
+	const payload =
+		command === 'resume' ? { command: 'pause', action: 'resume' } : { command };
+	const res = await fetch(`${normalizeUrl(baseUrl)}/api/job`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(payload),
+	});
+	if (!res.ok && res.status !== 204) {
+		const data = (await res.json().catch(() => ({}))) as { error?: string };
+		throw new Error(data.error || `HTTP ${res.status}`);
+	}
 }
 
 export function formatBytes(n: number): string {
