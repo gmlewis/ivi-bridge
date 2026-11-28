@@ -23,6 +23,13 @@ fi
 echo "Installing IVI 3D OrcaSlicer profiles into: $ORCA_DIR"
 
 mkdir -p "$USER_DIR/machine" "$USER_DIR/filament" "$USER_DIR/process"
+# Remove obsolete IVI 3D process profiles so only the canonical Normal & Strong
+# profiles appear in OrcaSlicer.
+rm -fv \
+  "$USER_DIR/process/0.30mm Normal Quality @IVI 3D - Copy.json" \
+  "$USER_DIR/process/0.30mm Normal Quality @IVI 3D - Copy.info" \
+  "$USER_DIR/process/0.30mm Normal Quality @IVI 3D - Tuned.json" \
+  "$USER_DIR/process/0.30mm Normal Quality @IVI 3D - Tuned.info"
 cp -v "$SCRIPT_DIR/filament/"*.json "$USER_DIR/filament/"
 cp -v "$SCRIPT_DIR/process/"*.json "$USER_DIR/process/"
 cp -v "$SCRIPT_DIR/machine/"*.json "$USER_DIR/machine/"

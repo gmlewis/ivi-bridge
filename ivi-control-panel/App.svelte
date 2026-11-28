@@ -69,11 +69,34 @@
 	const serialReady = $derived(Boolean(serial?.enabled && serial?.connected));
 	const wifiOnline = $derived(Boolean(stateData?.status?.reachable));
 	const printJob = $derived(serial?.print_job ?? null);
-	const usbPrinting = $derived(Boolean(printJob?.active));
-	const isPrinting = $derived(
-		Boolean(usbPrinting || (serialReady && serial?.working_status && serial.working_status !== 'IDLE'))
+	const usbPrinting = $derived(Boolean(printJob?.active && printJob?.source !== 'touchscreen'));
+	const screenPrinting = $derived(
+		Boolean(
+			(printJob?.active && printJob?.source === 'touchscreen') ||
+				(serialReady && serial?.working_status && serial.working_status !== 'IDLE')
+		)
 	);
+	const isPrinting = $derived(Boolean(usbPrinting || screenPrinting));
 	const controlsEnabled = $derived(serialReady && !busy && !isPrinting);
+
+	function fmtDuration(sec: number): string {
+		if (!sec || sec <= 0) return '—';
+		const h = Math.floor(sec / 3600);
+		const m = Math.floor((sec % 3600) / 60);
+		const s = sec % 60;
+		return h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m ${s}s` : `${s}s`;
+	}
+
+	function fmtClock(iso?: string): string {
+		if (!iso) return '—';
+		try {
+			const d = new Date(iso);
+			if (Number.isNaN(d.getTime())) return '—';
+			return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+		} catch {
+			return '—';
+		}
+	}
 
 	async function doJobAction(cmd: 'pause' | 'resume' | 'cancel') {
 		try {
@@ -443,8 +466,8 @@
 				</div>
 				<div class={isPrinting ? 'badge badge-print' : serialReady ? 'badge badge-ok' : 'badge badge-warn'}>
 					<text class="badge-text">
-						{usbPrinting && printJob
-							? `USB: ${printJob.state} ${printJob.completion.toFixed(1)}%`
+						{printJob && printJob.active
+							? `${printJob.source === 'touchscreen' ? 'Screen' : 'USB'}: ${printJob.completion.toFixed(1)}%${printJob.estimated_left_sec > 0 ? ` (~${fmtDuration(printJob.estimated_left_sec)} left)` : ''}`
 							: serialReady
 								? `USB: ${serial?.working_status || 'Connected'}`
 								: 'USB: Disconnected'}
@@ -490,14 +513,25 @@
 		</div>
 	</div>
 
-	<!-- Print-Active Safety Lockout Banner -->
+	<!-- Print-Active Progress & Safety Lockout Banner -->
 	{#if isPrinting}
 		<div class="lock-banner">
 			<text class="lock-banner-text">
-				{usbPrinting && printJob
-					? `USB PRINT ${printJob.state.toUpperCase()} (${printJob.completion.toFixed(1)}% · ${printJob.sent_lines}/${printJob.total_lines} lines): ${printJob.file_name}`
+				{printJob && printJob.active
+					? `${printJob.source === 'touchscreen' ? 'TOUCHSCREEN' : 'USB'} PRINT ${printJob.state.toUpperCase()} · ${printJob.completion.toFixed(1)}% · Est. Left: ~${fmtDuration(printJob.estimated_left_sec)}${printJob.est_finish_at ? ` (Finish ~${fmtClock(printJob.est_finish_at)})` : ''}`
 					: `TOUCHSCREEN PRINT IN PROGRESS (${serial?.working_status}) — Monitor-only mode: motion, heater, filament, and console controls are locked.`}
 			</text>
+			{#if printJob && printJob.active}
+				<div class="progress-track">
+					<div
+						class="progress-fill"
+						style={`width: ${Math.min(100, Math.max(0, printJob.completion)).toFixed(1)}%`}
+					></div>
+				</div>
+				<text class="lock-banner-sub">
+					{printJob.file_name}{printJob.max_z ? ` · Z ${(printJob.current_z ?? serial?.z ?? 0).toFixed(2)} / ${printJob.max_z.toFixed(2)} mm` : ''}{printJob.elapsed_sec ? ` · Elapsed ${fmtDuration(printJob.elapsed_sec)}` : ''}
+				</text>
+			{/if}
 			{#if usbPrinting && printJob}
 				<div class="conn-row">
 					{#if printJob.state === 'Paused'}
@@ -1284,18 +1318,40 @@
 	}
 
 	.lock-banner {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
 		background-color: #1e3a8a;
 		border-width: 1px;
 		border-style: solid;
 		border-color: #38bdf8;
 		border-radius: 8px;
-		padding: 8px 14px;
+		padding: 10px 14px;
 	}
 
 	.lock-banner-text {
 		font-size: 12px;
 		font-weight: 700;
 		color: #e0f2fe;
+	}
+
+	.lock-banner-sub {
+		font-size: 11px;
+		color: #bae6fd;
+	}
+
+	.progress-track {
+		width: 100%;
+		height: 10px;
+		background-color: #0f172a;
+		border-radius: 999px;
+		overflow: hidden;
+	}
+
+	.progress-fill {
+		height: 10px;
+		background-color: #38bdf8;
+		border-radius: 999px;
 	}
 
 	.conn-row {

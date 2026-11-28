@@ -9,7 +9,7 @@ clearance) and structural housings.
 - `machine/IVI 3D 0.3 nozzle - Tuned.json` — `4.5 mm` retraction @ `35 mm/s`, `0.3 mm` Slope Lift Z-hop, OctoPrint connection template (`print_host: 127.0.0.1:5000`).
 - `filament/IVI3D Generic PLA - 220C.json` — `220 °C`, `0.985` flow, `5.0 mm` retraction @ `40 mm/s`, `1.5 mm` wipe enabled, `0.3 mm` Slope Lift Z-hop.
 - `filament/IVI3D Tuned PETG - 240C.json` — `240 °C` (`245 °C` first layer), `0.97` flow, `6 mm³/s` max volumetric speed, `0.40` pressure advance.
-- `process/0.30mm Normal Quality @IVI 3D - Tuned.json` — Arachne walls, outer-before-inner wall sequence, precise outer wall, `0.15 mm` elephant-foot compensation, `-0.02 mm` XY contour / `+0.06 mm` XY hole compensation, `gyroid` sparse infill, arc fitting enabled.
+- `process/0.30mm Normal Quality @IVI 3D - Tuned.json` — Arachne walls, outer-before-inner wall sequence, precise outer wall, `0.15 mm` elephant-foot compensation, `0 mm` slice gap closing radius, `0.01 mm` resolution, `0 mm` XY contour/hole compensation (true 1:1 CAD clearance with zero tight-gear polygon dropouts), `gyroid` sparse infill, arc fitting enabled.
 
 ## Installation
 

@@ -146,10 +146,37 @@ private fun IviControlPanelApp() {
     val serial = state?.serial
     val serialReady = serial?.enabled == true && serial.connected
     val wifiOnline = state?.status?.reachable == true
-    val isPrinting = serialReady && !serial?.workingStatus.isNullOrBlank() && serial?.workingStatus != "IDLE"
+    val printJob = serial?.printJob
+    val usbPrinting = printJob?.active == true && printJob.source != "touchscreen"
+    val screenPrinting = (printJob?.active == true && printJob.source == "touchscreen") ||
+        (serialReady && !serial?.workingStatus.isNullOrBlank() && serial?.workingStatus != "IDLE")
+    val isPrinting = usbPrinting || screenPrinting
     val controlsEnabled = serialReady && !busy && !isPrinting
     val hotendHot = serialReady && (serial?.nozzleActual ?: 0.0) >= COLD_EXTRUSION_MIN_C
     val extrudeEnabled = controlsEnabled && hotendHot
+
+    fun fmtDur(sec: Int): String {
+        if (sec <= 0) return "—"
+        val h = sec / 3600
+        val m = (sec % 3600) / 60
+        val s = sec % 60
+        return when {
+            h > 0 -> "${h}h ${m}m"
+            m > 0 -> "${m}m ${s}s"
+            else -> "${s}s"
+        }
+    }
+
+    fun fmtFinishClock(iso: String): String {
+        if (iso.isBlank()) return ""
+        return try {
+            val inst = java.time.OffsetDateTime.parse(iso).atZoneSameInstant(java.time.ZoneId.systemDefault())
+            val fmt = java.time.format.DateTimeFormatter.ofPattern("h:mm a", Locale.US)
+            inst.format(fmt)
+        } catch (_: Exception) {
+            ""
+        }
+    }
 
     fun setMsg(msg: String, isErr: Boolean = false) {
         notice = msg
@@ -273,7 +300,7 @@ private fun IviControlPanelApp() {
                         shape = RoundedCornerShape(8.dp)
                     ) {
                         Text(
-                            if (estopArmed) "CONFIRM E-STOP!" else "E-STOP",
+                            if (estopArmed) "CONFIRM KILL!" else "E-STOP (Kill)",
                             fontWeight = FontWeight.Bold,
                             fontSize = 12.sp,
                             color = Color.White
@@ -291,7 +318,15 @@ private fun IviControlPanelApp() {
                         bg = if (wifiOnline) Color(0xFF064E3B) else Color(0xFF451A03)
                     )
                     StatusPill(
-                        label = if (serialReady) "USB: ${serial?.workingStatus?.ifBlank { "OK" }}" else "USB: Off",
+                        label = when {
+                            printJob?.active == true -> {
+                                val src = if (printJob.source == "touchscreen") "Screen" else "USB"
+                                val eta = if (printJob.estimatedLeftSec > 0) " · ~${fmtDur(printJob.estimatedLeftSec)}" else ""
+                                String.format(Locale.US, "%s: %.1f%%%s", src, printJob.completion, eta)
+                            }
+                            serialReady -> "USB: ${serial?.workingStatus?.ifBlank { "OK" }}"
+                            else -> "USB: Off"
+                        },
                         bg = when {
                             isPrinting -> Color(0xFF1E3A8A)
                             serialReady -> Color(0xFF064E3B)
@@ -342,20 +377,110 @@ private fun IviControlPanelApp() {
             }
         }
 
-        // Print-Active Lockout Banner
+        // Print-Active Progress & Lockout Banner
         if (isPrinting) {
-            Box(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(Color(0xFF1E3A8A), RoundedCornerShape(8.dp))
-                    .padding(horizontal = 10.dp, vertical = 7.dp)
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                Text(
-                    "PRINT IN PROGRESS (${serial?.workingStatus}) — Monitor-only mode: controls locked to protect your print.",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFFE0F2FE)
-                )
+                if (printJob?.active == true) {
+                    val srcLabel = if (printJob.source == "touchscreen") "TOUCHSCREEN" else "USB"
+                    val finishStr = fmtFinishClock(printJob.estFinishAt)
+                    val etaText = buildString {
+                        append(String.format(Locale.US, "%s PRINT %.1f%%", srcLabel, printJob.completion))
+                        if (printJob.estimatedLeftSec > 0) {
+                            append(" · Est. Left: ~${fmtDur(printJob.estimatedLeftSec)}")
+                        }
+                        if (finishStr.isNotEmpty()) {
+                            append(" (Finish ~$finishStr)")
+                        }
+                    }
+                    Text(
+                        etaText,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFE0F2FE)
+                    )
+                    // Visual progress bar matching the OrcaSlicer Device tab
+                    val frac = (printJob.completion / 100.0).toFloat().coerceIn(0f, 1f)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(10.dp)
+                            .background(Color(0xFF0F172A), RoundedCornerShape(999.dp))
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(frac)
+                                .height(10.dp)
+                                .background(Color(0xFF38BDF8), RoundedCornerShape(999.dp))
+                        )
+                    }
+                    Text(
+                        printJob.fileName +
+                            (if (printJob.maxZ > 0) String.format(Locale.US, " · Z %.2f / %.2f mm", printJob.currentZ, printJob.maxZ) else "") +
+                            (if (printJob.elapsedSec > 0) " · Elapsed ${fmtDur(printJob.elapsedSec)}" else ""),
+                        fontSize = 10.5.sp,
+                        color = Color(0xFFBAE6FD)
+                    )
+                    if (usbPrinting) {
+                        val cancelArmed = armedAction == "cancel_print"
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            val isPaused = printJob.state == "Paused"
+                            Button(
+                                onClick = {
+                                    val cmd = if (isPaused) "resume" else "pause"
+                                    runAction("Print $cmd sent", allowWhilePrinting = true) {
+                                        BridgeApi.sendJobCommand(bridgeUrl, cmd)
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1D4ED8)),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text(
+                                    if (isPaused) "Resume Print" else "Pause Print",
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color.White
+                                )
+                            }
+                            Button(
+                                onClick = {
+                                    requireTwoTap("cancel_print", "Tap again to cancel print & home") {
+                                        runAction("Cancelling print & homing...", allowWhilePrinting = true) {
+                                            BridgeApi.sendJobCommand(bridgeUrl, "cancel")
+                                        }
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = if (cancelArmed) AccentRed else AccentRedDim),
+                                border = if (cancelArmed) BorderStroke(2.dp, Color(0xFFFEF08A)) else null,
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text(
+                                    if (cancelArmed) "CONFIRM CANCEL!" else "Cancel Print (Stop & Home)",
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    Text(
+                        "PRINT IN PROGRESS (${serial?.workingStatus}) — Monitor-only mode: controls locked to protect your print.",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFE0F2FE)
+                    )
+                }
             }
         }
 

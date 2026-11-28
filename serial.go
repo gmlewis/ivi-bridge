@@ -68,11 +68,13 @@ type SerialController struct {
 	homeZ       float64
 	hasHomeZ    bool
 	waiterCh    chan string // receives lines while a command is waiting for "ok"
-	printActive bool
-	printPaused bool
-	printCancel context.CancelFunc
-	printWakeCh chan struct{}
-	printDoneCh chan struct{}
+	printActive          bool
+	printPaused          bool
+	printCancel          context.CancelFunc
+	printWakeCh          chan struct{}
+	printDoneCh          chan struct{}
+	screenPrintStartedAt time.Time
+	screenPrintObserved  bool // true if IDLE -> WORKING_SCREEN transition was directly observed
 }
 
 func NewSerialController(portSpec string, baud int, dryRun bool) *SerialController {
@@ -419,7 +421,18 @@ func (sc *SerialController) parseLineLocked(line string) {
 		sc.updateAtHomeLocked()
 	}
 	if strings.HasPrefix(line, "Working Status:") {
-		sc.state.WorkingStatus = strings.ToUpper(strings.TrimSpace(strings.TrimPrefix(line, "Working Status:")))
+		prev := sc.state.WorkingStatus
+		next := strings.ToUpper(strings.TrimSpace(strings.TrimPrefix(line, "Working Status:")))
+		sc.state.WorkingStatus = next
+		if next != "" && next != "IDLE" && !sc.printActive {
+			if sc.screenPrintStartedAt.IsZero() {
+				sc.screenPrintStartedAt = now
+				sc.screenPrintObserved = (prev == "IDLE")
+			}
+		} else if next == "IDLE" {
+			sc.screenPrintStartedAt = time.Time{}
+			sc.screenPrintObserved = false
+		}
 	}
 }
 

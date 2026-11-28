@@ -42,14 +42,19 @@ export interface ConsoleLine {
 
 export interface PrintJobStatus {
 	active: boolean;
+	source?: string; // "usb" | "touchscreen"
 	state: string;
 	file_name: string;
 	total_lines: number;
 	sent_lines: number;
 	completion: number;
+	current_z?: number;
+	max_z?: number;
 	started_at?: string;
+	est_total_sec?: number;
 	elapsed_sec: number;
 	estimated_left_sec: number;
+	est_finish_at?: string;
 	last_error?: string;
 }
 

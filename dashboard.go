@@ -131,9 +131,15 @@ const dashboardHTML = `<!doctype html>
       <div class="job-bar-wrap"><div class="job-bar" id="jobBar"></div></div>
       <div class="job-meta">
         <span>Lines: <strong id="jobLines">—</strong></span>
+        <span>Z: <strong id="jobZ">—</strong></span>
         <span>Elapsed: <strong id="jobElapsed">—</strong></span>
-        <span>ETA: <strong id="jobEta">—</strong></span>
+        <span>Est. Left: <strong id="jobEta">—</strong></span>
+        <span>Finish: <strong id="jobFinish">—</strong></span>
         <span id="jobErr" style="color:var(--err);"></span>
+      </div>
+      <div id="screenPickerRow" style="display:none;margin-top:8px;align-items:center;gap:8px;flex-wrap:wrap;">
+        <span class="label">Touchscreen file:</span>
+        <select id="screenFileSel" onchange="pinScreenFile(this.value)" style="background:#0d1117;border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px;font-size:12px;max-width:420px;"></select>
       </div>
       <div class="job-actions" id="jobActions" style="display:none;">
         <button class="btn warn" id="pauseBtn" onclick="jobCmd('pause')">Pause Print</button>
@@ -391,6 +397,9 @@ function jobCmd(cmd) {
   const payload = cmd === 'resume' ? { command: 'pause', action: 'resume' } : { command: cmd };
   postJSON('/api/job', payload).then(d => d && toast('Print ' + cmd + ' sent'));
 }
+function pinScreenFile(name) {
+  postJSON('/api/ivi/screen_job', { file_name: name }).then(d => d && toast('Tracking ETA for ' + name));
+}
 
 function drawTempChart() {
   const cv = document.getElementById('tempChart');
@@ -447,7 +456,7 @@ async function refresh() {
     up.className = 'pill ' + (ser.connected ? 'ok' : 'err');
     up.textContent = ser.connected ? 'USB: Connected' : 'USB: Disconnected';
 
-    const usbPrinting = !!(pj && pj.active);
+    const usbPrinting = !!(pj && pj.active && pj.source !== 'touchscreen');
     const screenBusy = !!(ser.connected && ser.working_status && ser.working_status !== 'IDLE');
     const isBusy = usbPrinting || screenBusy;
 
@@ -456,8 +465,8 @@ async function refresh() {
       sp.className = 'pill ' + (pj.state === 'Paused' ? 'warn' : 'info');
       sp.textContent = 'USB ' + pj.state;
     } else if (screenBusy) {
-      sp.className = 'pill warn';
-      sp.textContent = 'Touchscreen: ' + ser.working_status;
+      sp.className = 'pill info';
+      sp.textContent = 'Touchscreen Printing';
     } else {
       sp.className = 'pill ok';
       sp.textContent = 'Operational (IDLE)';
@@ -470,20 +479,43 @@ async function refresh() {
     // Print Job Card
     const jp = document.getElementById('jobStatePill');
     const ja = document.getElementById('jobActions');
+    const spr = document.getElementById('screenPickerRow');
     if (pj) {
-      jp.textContent = pj.state;
+      const isScreen = pj.source === 'touchscreen';
+      jp.textContent = isScreen ? 'Touchscreen Printing' : pj.state;
       jp.className = 'pill ' + (pj.state === 'Printing' ? 'info' : pj.state === 'Completed' ? 'ok' : pj.state === 'Error' ? 'err' : 'warn');
       document.getElementById('jobFile').textContent = pj.file_name || '—';
       document.getElementById('jobPct').textContent = (pj.completion || 0).toFixed(1) + '%';
       document.getElementById('jobBar').style.width = Math.min(100, Math.max(0, pj.completion || 0)) + '%';
-      document.getElementById('jobLines').textContent = (pj.sent_lines || 0) + ' / ' + (pj.total_lines || 0);
+      document.getElementById('jobLines').textContent = isScreen
+        ? (pj.total_lines ? (pj.total_lines + ' total') : '—')
+        : ((pj.sent_lines || 0) + ' / ' + (pj.total_lines || 0));
+      document.getElementById('jobZ').textContent = pj.max_z
+        ? ((pj.current_z || ser.z || 0).toFixed(2) + ' / ' + pj.max_z.toFixed(2) + ' mm')
+        : ((ser.z || 0).toFixed(2) + ' mm');
       document.getElementById('jobElapsed').textContent = fmtDur(pj.elapsed_sec || 0);
-      document.getElementById('jobEta').textContent = pj.active ? fmtDur(pj.estimated_left_sec || 0) : '—';
+      document.getElementById('jobEta').textContent = (pj.active && pj.estimated_left_sec > 0) ? ('~' + fmtDur(pj.estimated_left_sec)) : '—';
+      document.getElementById('jobFinish').textContent = (pj.active && pj.est_finish_at)
+        ? ('~' + new Date(pj.est_finish_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }))
+        : '—';
       document.getElementById('jobErr').textContent = pj.last_error || '';
-      ja.style.display = pj.active ? 'flex' : 'none';
-      document.getElementById('topCancelBtn').style.display = pj.active ? 'inline-block' : 'none';
+      ja.style.display = usbPrinting ? 'flex' : 'none';
+      document.getElementById('topCancelBtn').style.display = usbPrinting ? 'inline-block' : 'none';
       document.getElementById('pauseBtn').style.display = pj.state === 'Paused' ? 'none' : 'inline-block';
       document.getElementById('resumeBtn').style.display = pj.state === 'Paused' ? 'inline-block' : 'none';
+      if (isScreen && d.history && d.history.length > 0) {
+        spr.style.display = 'flex';
+        const sel = document.getElementById('screenFileSel');
+        const names = d.history.slice(0, 15).map(h => h.sent_name);
+        const curKey = names.join('|');
+        if (sel.dataset.key !== curKey) {
+          sel.dataset.key = curKey;
+          sel.innerHTML = names.map(n => '<option value="' + n.replace(/"/g,'&quot;') + '">' + n + '</option>').join('');
+        }
+        if (names.includes(pj.file_name)) sel.value = pj.file_name;
+      } else {
+        spr.style.display = 'none';
+      }
     } else {
       jp.textContent = screenBusy ? ser.working_status : 'Idle';
       jp.className = 'pill ' + (screenBusy ? 'warn' : '');
@@ -491,10 +523,13 @@ async function refresh() {
       document.getElementById('jobPct').textContent = '—';
       document.getElementById('jobBar').style.width = '0%';
       document.getElementById('jobLines').textContent = '—';
+      document.getElementById('jobZ').textContent = '—';
       document.getElementById('jobElapsed').textContent = '—';
       document.getElementById('jobEta').textContent = '—';
+      document.getElementById('jobFinish').textContent = '—';
       document.getElementById('jobErr').textContent = '';
       ja.style.display = 'none';
+      spr.style.display = 'none';
       document.getElementById('topCancelBtn').style.display = 'none';
     }
 

@@ -40,9 +40,10 @@ type BridgeServer struct {
 	StateFile     string
 	Now           func() time.Time
 
-	mu        sync.Mutex
-	history   []UploadRecord
-	seenNames map[string]bool
+	mu               sync.Mutex
+	history          []UploadRecord
+	seenNames        map[string]bool
+	pinnedScreenFile string
 }
 
 func NewBridgeServer(ivi *IVIClient, apiKey string, autoTransform, uniqueNames bool, stateFile string) *BridgeServer {
@@ -173,6 +174,7 @@ func (s *BridgeServer) Handler() http.Handler {
 	mux.HandleFunc("/api/ivi/settings", s.handleIVISettings)
 	mux.HandleFunc("/api/ivi/command", s.handleIVICommand)
 	mux.HandleFunc("/api/ivi/history/clear", s.handleIVIHistoryClear)
+	mux.HandleFunc("/api/ivi/screen_job", s.handleScreenJobPin)
 	mux.HandleFunc("/api/ivi/serial/gcode", s.handleSerialGCode)
 	mux.HandleFunc("/api/ivi/serial/jog", s.handleSerialJog)
 	mux.HandleFunc("/api/ivi/serial/home", s.handleSerialHome)
@@ -370,8 +372,14 @@ func (s *BridgeServer) handleJob(w http.ResponseWriter, r *http.Request) {
 			}
 		} else if s.Serial != nil {
 			ss := s.Serial.Snapshot()
-			if ss.Connected && ss.WorkingStatus != "" && ss.WorkingStatus != "IDLE" {
-				stateText = "Printing"
+			if sj := s.inferTouchscreenJob(ss); sj != nil {
+				stateText = sj.State
+				lastFile = sj.FileName
+				completion = sj.Completion
+				printTime = sj.ElapsedSec
+				if sj.EstimatedLeftSec > 0 {
+					printTimeLeft = sj.EstimatedLeftSec
+				}
 			}
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -542,6 +550,11 @@ func (s *BridgeServer) handleIVIState(w http.ResponseWriter, r *http.Request) {
 	var serialSnap SerialState
 	if s.Serial != nil {
 		serialSnap = s.Serial.Snapshot()
+		if serialSnap.PrintJob == nil || !serialSnap.PrintJob.Active {
+			if sj := s.inferTouchscreenJob(serialSnap); sj != nil {
+				serialSnap.PrintJob = sj
+			}
+		}
 	} else {
 		serialSnap.Console = []ConsoleLine{}
 	}

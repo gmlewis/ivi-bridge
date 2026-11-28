@@ -73,10 +73,11 @@ type GCodeMeta struct {
 	TotalLines     int     `json:"total_lines"`
 	ValidLines     int     `json:"valid_lines"`
 	StrippedM73    int     `json:"stripped_m73"`
-	Material       string  `json:"material"`
-	NozzleTemp     string  `json:"nozzle_temp"`
-	BedTemp        string  `json:"bed_temp"`
-	MinX           float64 `json:"min_x"`
+	Material       string   `json:"material"`
+	NozzleTemp     string   `json:"nozzle_temp"`
+	BedTemp        string   `json:"bed_temp"`
+	EstTimeSec     float64  `json:"est_time_sec,omitempty"`
+	MinX           float64  `json:"min_x"`
 	MaxX           float64 `json:"max_x"`
 	MinY           float64 `json:"min_y"`
 	MaxY           float64 `json:"max_y"`
@@ -473,6 +474,7 @@ func TransformGCode(raw []byte, now time.Time) ([]byte, GCodeMeta, error) {
 		Material:    material,
 		NozzleTemp:  nozzle,
 		BedTemp:     bed,
+		EstTimeSec:  estTimeSec,
 		MinX:        minX,
 		MaxX:        maxX,
 		MinY:        minY,

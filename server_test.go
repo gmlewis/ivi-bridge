@@ -163,3 +163,42 @@ func TestUploadAndPrintUSBSerial(t *testing.T) {
 	}
 	t.Fatalf("timed out waiting for dry-run USB serial print to complete; status=%+v", bridge.Serial.PrintJobSnapshot())
 }
+
+func TestTouchscreenJobInference(t *testing.T) {
+	if got := estimateDurationFromFilename("PGB-CARTRIDGE_PLA_7h42m.gcode"); got != 7*3600+42*60 {
+		t.Fatalf("expected 7h42m = 27720s, got %v", got)
+	}
+	if got := estimateDurationFromFilename("part_PLA_25m37s_112108.gcode"); got != 25*60+37 {
+		t.Fatalf("expected 25m37s = 1537s, got %v", got)
+	}
+
+	ivi := NewIVIClient("http://127.0.0.1:8080", true, false, "")
+	bridge := NewBridgeServer(ivi, "", true, true, "")
+	now := time.Date(2026, 11, 27, 12, 30, 0, 0, time.UTC)
+	bridge.Now = func() time.Time { return now }
+	bridge.recordUpload(UploadRecord{
+		Timestamp: now.Add(-3*time.Hour - 25*time.Minute),
+		SentName:  "PGB-CARTRIDGE_PLA_7h42m.gcode",
+		Meta:      GCodeMeta{TotalLines: 500000, MaxZ: 10.25, BedTemp: "60"},
+	})
+
+	ss := SerialState{
+		Connected:     true,
+		WorkingStatus: "WORKING_SCREEN",
+		Z:             5.00,
+		BedTarget:     60,
+	}
+	job := bridge.inferTouchscreenJob(ss)
+	if job == nil || !job.Active || job.Source != "touchscreen" {
+		t.Fatalf("expected active touchscreen job, got %+v", job)
+	}
+	if job.FileName != "PGB-CARTRIDGE_PLA_7h42m.gcode" {
+		t.Fatalf("unexpected filename: %q", job.FileName)
+	}
+	if job.Completion < 40 || job.Completion > 55 {
+		t.Fatalf("expected ~45-50%% completion, got %.1f%%", job.Completion)
+	}
+	if job.EstimatedLeftSec < 12000 || job.EstimatedLeftSec > 17000 {
+		t.Fatalf("expected ~4h remaining (14400s), got %ds", job.EstimatedLeftSec)
+	}
+}

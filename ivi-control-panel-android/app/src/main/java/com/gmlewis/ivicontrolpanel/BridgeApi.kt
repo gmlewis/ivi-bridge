@@ -23,6 +23,21 @@ data class ConsoleLine(
     val text: String
 )
 
+data class PrintJobStatus(
+    val active: Boolean = false,
+    val source: String = "",
+    val state: String = "",
+    val fileName: String = "",
+    val totalLines: Int = 0,
+    val sentLines: Int = 0,
+    val completion: Double = 0.0,
+    val currentZ: Double = 0.0,
+    val maxZ: Double = 0.0,
+    val elapsedSec: Int = 0,
+    val estimatedLeftSec: Int = 0,
+    val estFinishAt: String = ""
+)
+
 data class SerialState(
     val enabled: Boolean = false,
     val connected: Boolean = false,
@@ -42,6 +57,7 @@ data class SerialState(
     val z: Double = 0.0,
     val e: Double = 0.0,
     val lastError: String = "",
+    val printJob: PrintJobStatus? = null,
     val console: List<ConsoleLine> = emptyList()
 )
 
@@ -154,6 +170,24 @@ object BridgeApi {
             }
         }
 
+        val pjObj = serObj.optJSONObject("print_job")
+        val printJob = if (pjObj != null) {
+            PrintJobStatus(
+                active = pjObj.optBoolean("active", false),
+                source = pjObj.optString("source"),
+                state = pjObj.optString("state"),
+                fileName = pjObj.optString("file_name"),
+                totalLines = pjObj.optInt("total_lines", 0),
+                sentLines = pjObj.optInt("sent_lines", 0),
+                completion = pjObj.optDouble("completion", 0.0),
+                currentZ = pjObj.optDouble("current_z", 0.0),
+                maxZ = pjObj.optDouble("max_z", 0.0),
+                elapsedSec = pjObj.optInt("elapsed_sec", 0),
+                estimatedLeftSec = pjObj.optInt("estimated_left_sec", 0),
+                estFinishAt = pjObj.optString("est_finish_at")
+            )
+        } else null
+
         return BridgeState(
             printerUrl = j.optString("printer_url"),
             autoTransform = j.optBoolean("auto_transform", true),
@@ -183,6 +217,7 @@ object BridgeApi {
                 z = serObj.optDouble("z", 0.0),
                 e = serObj.optDouble("e", 0.0),
                 lastError = serObj.optString("last_error"),
+                printJob = printJob,
                 console = consoleLines
             ),
             history = history
@@ -236,6 +271,15 @@ object BridgeApi {
 
     suspend fun clearConsole(baseUrl: String) {
         requestJson(baseUrl, "/api/ivi/serial/console/clear", "POST", JSONObject(), 5_000)
+    }
+
+    suspend fun sendJobCommand(baseUrl: String, command: String) {
+        val body = if (command == "resume") {
+            JSONObject().put("command", "pause").put("action", "resume")
+        } else {
+            JSONObject().put("command", command)
+        }
+        requestJson(baseUrl, "/api/job", "POST", body, 15_000)
     }
 
     suspend fun updateSettings(baseUrl: String, autoTransform: Boolean? = null, uniqueNames: Boolean? = null) {

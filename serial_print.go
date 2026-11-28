@@ -10,17 +10,22 @@ import (
 	"time"
 )
 
-// PrintJobStatus describes an active or most-recent USB-serial print job.
+// PrintJobStatus describes an active or most-recent USB-serial or touchscreen print job.
 type PrintJobStatus struct {
 	Active           bool      `json:"active"`
-	State            string    `json:"state"` // Printing, Paused, Cancelling, Completed, Cancelled, Error
+	Source           string    `json:"source,omitempty"` // "usb" or "touchscreen"
+	State            string    `json:"state"`            // Printing, Paused, Cancelling, Completed, Cancelled, Error
 	FileName         string    `json:"file_name"`
 	TotalLines       int       `json:"total_lines"`
 	SentLines        int       `json:"sent_lines"`
 	Completion       float64   `json:"completion"`
+	CurrentZ         float64   `json:"current_z,omitempty"`
+	MaxZ             float64   `json:"max_z,omitempty"`
 	StartedAt        time.Time `json:"started_at"`
+	EstTotalSec      int       `json:"est_total_sec,omitempty"`
 	ElapsedSec       int       `json:"elapsed_sec"`
 	EstimatedLeftSec int       `json:"estimated_left_sec"`
+	EstFinishAt      time.Time `json:"est_finish_at,omitempty"`
 	LastError        string    `json:"last_error,omitempty"`
 }
 
@@ -74,6 +79,7 @@ func (sc *SerialController) PrintJobSnapshot() *PrintJobStatus {
 		if cp.SentLines > 0 && cp.TotalLines > cp.SentLines {
 			rate := float64(cp.ElapsedSec) / float64(cp.SentLines)
 			cp.EstimatedLeftSec = int(rate * float64(cp.TotalLines-cp.SentLines))
+			cp.EstFinishAt = time.Now().Add(time.Duration(cp.EstimatedLeftSec) * time.Second)
 		}
 	}
 	return &cp
@@ -119,6 +125,7 @@ func (sc *SerialController) StartPrint(filename string, gcode []byte) error {
 	sc.printDoneCh = make(chan struct{})
 	sc.state.PrintJob = &PrintJobStatus{
 		Active:     true,
+		Source:     "usb",
 		State:      "Printing",
 		FileName:   filename,
 		TotalLines: len(lines),
